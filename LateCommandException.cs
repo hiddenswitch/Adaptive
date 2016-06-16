@@ -6,17 +6,14 @@ using System.Collections;
 using System.Collections.Generic;
 using PeerId = System.Int32;
 using ConnectionId = System.Int32;
+using FrameIndex = System.Int32;
 
 namespace HiddenSwitch.Multiplayer
 {
 
-	/// <summary>
-	/// A list of unacknowledged commands
-	/// </summary>
-	public class UnacknowledgedCommands
-	{
-		public int frameIndex;
-		public IList<CommandWithArguments> queuedCommands;
+	public class LateCommandException : System.Exception {
+		public int FrameIndex {get; set;}
+		public byte CommandId {get; set;}
+		public CommandArguments Arguments {get; set;}
 	}
-	
 }

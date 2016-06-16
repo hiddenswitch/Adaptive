@@ -10,13 +10,8 @@ using ConnectionId = System.Int32;
 namespace HiddenSwitch.Multiplayer
 {
 
-	/// <summary>
-	/// Represents a single queued command
-	/// </summary>
-	public class QueuedCommand
+	public sealed class CommandWithArgumentsAndPeer : CommandWithArguments
 	{
-		public byte commandId;
-		public CommandArguments arguments;
+		public PeerId peerId;
 	}
-	
 }

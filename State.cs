@@ -25,7 +25,7 @@ namespace HiddenSwitch.Multiplayer
 			throw new NotImplementedException ();
 		}
 
-		public object Clone ()
+		public virtual object Clone ()
 		{
 			throw new NotImplementedException ();
 		}

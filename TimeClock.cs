@@ -15,19 +15,23 @@ namespace HiddenSwitch.Multiplayer
 	{
 		public event Action<int> Tick;
 
-		public int ElapsedFrameCount { get; private set; }
+		protected int m_elapsedFrameCount;
 
-		public int FramesPerSecond { get; private set; }
+		public int ElapsedFrameCount { get { return m_elapsedFrameCount + StartFrame; } }
 
-		public bool EndOfFrame { get; private set; }
+		public int FramesPerSecond { get; protected set; }
+
+		public bool EndOfFrame { get; protected set; }
+
+		public int StartFrame { get; protected set; }
 
 		internal TimeClockHelper m_timeClockHelper;
 
-		public TimeClock (bool autostart = true, int framesPerSecond = 30, bool endOfFrame = false)
+		public TimeClock (bool autostart = true, int framesPerSecond = 30, bool endOfFrame = false, int startFrame = 0)
 		{
 			FramesPerSecond = framesPerSecond;
 			EndOfFrame = endOfFrame;
-
+			StartFrame = startFrame;
 			var timer = new GameObject ("Timer Helper");
 			m_timeClockHelper = timer.AddComponent<TimeClockHelper> ();
 			m_timeClockHelper.framesPerSecond = framesPerSecond;
@@ -40,10 +44,10 @@ namespace HiddenSwitch.Multiplayer
 
 		internal void HelperTick ()
 		{
-			ElapsedFrameCount++;
 			if (Tick != null) {
-				Tick (ElapsedFrameCount - 1);
+				Tick (ElapsedFrameCount);
 			}
+			m_elapsedFrameCount++;
 		}
 
 		/// <summary>

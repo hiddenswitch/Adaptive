@@ -11,21 +11,28 @@ namespace HiddenSwitch.Multiplayer
 	/// <summary>
 	/// A script that handles data from the Unity network transport layer
 	/// </summary>
-	internal class NetworkTransportReceiveHelper : MonoBehaviour
+	internal sealed class NetworkTransportReceiveHelper : MonoBehaviour
 	{
-		internal INetworkReceiver adaptiveDelegate { get; set; }
+		internal INetworkReceiverHelper transportDelegate { get; set; }
+
+		internal byte[] workingBuffer = new byte[32 * 1024];
 
 		void Update ()
 		{
-			int recHostId; 
+			int recHostId;
 			int connectionId; 
 			int channelId; 
-			byte[] recBuffer = new byte[1024]; 
-			int bufferSize = 1024;
 			int dataSize;
 			byte error;
-			NetworkEventType recData = NetworkTransport.Receive (out recHostId, out connectionId, out channelId, recBuffer, bufferSize, out dataSize, out error);
-			adaptiveDelegate.Receive (recHostId, connectionId, channelId, recBuffer, bufferSize, dataSize, error, recData);
+			NetworkEventType recData = NetworkTransport.Receive (out recHostId, out connectionId, out channelId, workingBuffer, workingBuffer.Length, out dataSize, out error);
+			// Don't create buffers 
+			byte[] recBuffer = new byte[dataSize];
+
+			if (dataSize > 0) {
+				Buffer.BlockCopy (workingBuffer, 0, recBuffer, 0, dataSize);
+			}
+
+			transportDelegate.Receive (recHostId, connectionId, channelId, recBuffer, dataSize, dataSize, error, recData);
 		}
 
 		void Awake ()

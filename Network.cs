@@ -11,31 +11,27 @@ using FrameIndex = System.Int32;
 namespace HiddenSwitch.Multiplayer
 {
 	/// <summary>
-	/// The Adaptive networking class.
+	/// Send and receive messages over a network
 	/// </summary>
-	public class Adaptive<TState> : INetworkReceiver
+	public class Network<TState> : IClock
 		where TState : State, new()
 	{
-		/// <summary>
-		/// How many frames should be buffered before executing the commands that occurred during those frames?
-		/// </summary>
-		public int PlayoutDelayFrameCount = 10;
-		public int Port = 6002;
+		protected System.Random m_random = new System.Random ();
 
 		/// <summary>
 		/// Get a public hostname that can be used to connect to this peer.
 		/// If you are using a relay service, this still returns a valid connectable peer.
 		/// </summary>
 		/// <value>The hostname.</value>
-		public string Hostname {
+		public string HostName {
 			get {
 				throw new NotImplementedException ();
 			}
 		}
 
-		protected int m_ReliableChannelId;
-		protected int m_UnreliableChannelId;
-		protected int m_HostId;
+		protected bool m_allHaveState;
+
+
 		protected int m_myPeerId;
 
 		public PeerId MyPeerId {
@@ -44,126 +40,82 @@ namespace HiddenSwitch.Multiplayer
 			}
 		}
 
-		protected static GameObject m_NetworkReceiverGameObject;
+		public ITransport Transport {
+			get;
+			private set;
+		}
 
+		public bool TickAllAcknowledgedFrames { get; set; }
+
+		private IClock m_clock;
+
+		public IClock Clock {
+			get {
+				return m_clock;
+			}
+			set {
+				if (m_clock != null) {
+					m_clock.Tick -= OnNetworkClockTick;
+				}
+
+				m_clock = value;
+				m_clock.Tick += OnNetworkClockTick;
+			}
+		}
+
+		protected FrameIndex m_stateStartFrame;
 		protected Dictionary<ConnectionId, Peer> m_peers = new Dictionary<int, Peer> ();
-		protected Dictionary<byte, Action<TState, BinaryReader>> m_commandHandlers = new Dictionary<byte, Action<TState, BinaryReader>> ();
-		protected Dictionary<FrameIndex, Frame> m_frames = new Dictionary<FrameIndex, Frame> ();
+		protected Dictionary<FrameIndex, NetworkFrame> m_frames = new Dictionary<FrameIndex, NetworkFrame> ();
 		protected Dictionary<PeerId, Queue<UnacknowledgedCommands>> m_unacknowledgedCommandQueue = new Dictionary<PeerId, Queue<UnacknowledgedCommands>> ();
 		protected TState m_latestState;
+
+		/// <summary>
+		/// The latest state initialized in the constructor or received over the network from the other party.
+		/// </summary>
+		/// <value>The state of the latest.</value>
+		public TState LatestState {
+			get {
+				return m_latestState;
+			}
+		}
+
 		protected int m_latestStateFrameIndex = 0;
+		protected int m_latestAcknowledgedFrame;
 		/// <summary>
 		/// A reusable command send buffer.
 		/// </summary>
 		protected byte[] m_sendCommandBuffer = new byte[32 * 1024];
 		/// <summary>
-		/// A reusable send state buffer
+		/// A reusable state send buffer
 		/// </summary>
 		protected byte[] m_sendStateBuffer = new byte[32 * 1024];
 
-		public Adaptive (PeerId? peerId = null)
+		public Network (IClock clock, PeerId? peerId = null, ITransport transport = null, TState startState = null)
 		{
 			// Setup a peer ID for myself. Just a random value for now
-			m_myPeerId = peerId.HasValue ? peerId.GetValueOrDefault () : UnityEngine.Random.Range (1, int.MaxValue);
+			m_myPeerId = peerId.HasValue ? peerId.GetValueOrDefault () : m_random.Next ();
 
-			// Create an object that handles network receive events from the transport layer
-			if (m_NetworkReceiverGameObject == null) {
-				m_NetworkReceiverGameObject = new GameObject ("Network Receiver");
-				var receiver = m_NetworkReceiverGameObject.AddComponent<NetworkTransportReceiveHelper> ();
-				receiver.adaptiveDelegate = this;
-			}
+			// Configure a transport if one isn't specified
+			Transport = transport ?? new UnityNetworkingTransport ();
 
-			// Initialize the network transport code
-			var config = new GlobalConfig ();
-			NetworkTransport.Init (config);
-
-			// Create the reliable (state transfer) and unreliable (command transfer) layers
-			var networkTransportConfig = new ConnectionConfig ();
-			m_ReliableChannelId = networkTransportConfig.AddChannel (QosType.AllCostDelivery);
-			m_UnreliableChannelId = networkTransportConfig.AddChannel (QosType.UnreliableFragmented);
-
-			// Set up a networking topology. For now, only two player is supported.
-			var topology = new HostTopology (networkTransportConfig, 2);
-
-			// Start a host
-			m_HostId = NetworkTransport.AddHost (topology, Port);
+			Transport.Received += HandleTransportReceive;
+			m_latestState = startState;
+			Clock = clock;
 		}
 
 		/// <summary>
-		/// Connect to another peer running Adaptive
+		/// Handles messages from the network. Supports simulation
 		/// </summary>
-		/// <returns>The peer.</returns>
-		/// <param name="hostName">Host name.</param>
-		/// <param name="port">Port.</param>
-		public Peer AddPeer (string hostName, int port)
-		{
-			byte error;
-			var connectionId = NetworkTransport.Connect (m_HostId, hostName, port, 0, out error);
-
-			// TODO: Handle error
-			var peer = new Peer (connectionId);
-			// Prepare a peer record
-			m_peers.Add (connectionId, peer);
-			return peer;
-		}
-
-		/// <summary>
-		/// Adds a handler for a given command.
-		/// 
-		/// The handler is given two arguments. The first argument to your handler is an instance of TCommand. This
-		/// TCommand type subclasses Command. It should contain fields that correspond to the arguments of the logical
-		/// parts of your handler. The second argument is an instance of TState. TState is a type that subclasses
-		/// State and contains a logical representation of your game.
-		/// </summary>
-		/// <returns>A callable ID.</returns>
-		/// <param name="id">The ID of this command. Used in the SendCommand method.</param> 
-		/// <param name="handler">Handler for this command. Used by the simulator logic to execute the command at the right time.</param>
-		public void AddCommandHandler<TCommandArguments> (byte id, Action<TCommandArguments, TState> handler)
-			where TCommandArguments : CommandArguments, new()
-		{
-			// Wrap the command handler
-			m_commandHandlers.Add (id, (TState state, BinaryReader reader) => {
-				var command = new TCommandArguments ();
-				command.Deserialize (reader);
-				// We probably don't need to do anything to compare the state before and after
-				handler.Invoke (command, state);
-			});
-		}
-
-		/// <summary>
-		/// Calls a command with the given id and arguments. This command is sent with the current rendering frame as its time,
-		/// not the latest frame (which may be possible to render, but isn't rendered yet).
-		/// </summary>
-		/// <param name="id">Identifier.</param>
-		/// <param name="command">Command.</param>
-		/// <typeparam name="TCommand">The 1st type parameter.</typeparam>
-		public void CallCommand<TCommandArguments> (byte id, TCommandArguments command)
-			where TCommandArguments : CommandArguments
-		{
-			
-		}
-
-		/// <summary>
-		/// Receives network data. Supports simulation.
-		/// </summary>
-		/// <param name="recHostId">Rec host identifier.</param>
 		/// <param name="connectionId">Connection identifier.</param>
 		/// <param name="channelId">Channel identifier.</param>
-		/// <param name="recBuffer">Rec buffer.</param>
-		/// <param name="bufferSize">Buffer size.</param>
-		/// <param name="dataSize">Data size.</param>
+		/// <param name="eventType">Event type.</param>
+		/// <param name="buffer">Buffer.</param>
+		/// <param name="startIndex">Start index.</param>
+		/// <param name="length">Length.</param>
 		/// <param name="error">Error.</param>
-		/// <param name="recData">Rec data.</param>
-		public void Receive (int recHostId,
-		                     int connectionId,
-		                     int channelId,
-		                     byte[] recBuffer,
-		                     int bufferSize,
-		                     int dataSize,
-		                     byte error,
-		                     NetworkEventType recData)
+		void HandleTransportReceive (int connectionId, int channelId, NetworkEventType eventType, byte[] buffer, int startIndex, int length, byte error)
 		{
-			switch (recData) {
+			switch (eventType) {
 			case NetworkEventType.Nothing:
 				break;
 			case NetworkEventType.ConnectEvent:
@@ -177,12 +129,12 @@ namespace HiddenSwitch.Multiplayer
 				var peerIdBytes = BitConverter.GetBytes (MyPeerId);
 				peerIdBytes.CopyTo (peerInfoBuffer, 1);
 				byte peerIdMessageError;
-				NetworkTransport.Send (m_HostId, connectionId, m_ReliableChannelId, peerInfoBuffer, 5, out peerIdMessageError);
+				Transport.Send (connectionId, Transport.ReliableChannelId, peerInfoBuffer, 0, 5, out peerIdMessageError);
 				break;
 			case NetworkEventType.DataEvent:
 				// TODO: Handle unusually short frames
 				// Check the message type byte
-				var binaryReader = new BinaryReader (new MemoryStream (recBuffer, 0, dataSize, false));
+				var binaryReader = new BinaryReader (new MemoryStream (buffer, 0, length, false));
 				var messageType = binaryReader.ReadByte ();
 				PeerId peerId;
 				switch (messageType) {
@@ -193,6 +145,20 @@ namespace HiddenSwitch.Multiplayer
 					var stack = m_unacknowledgedCommandQueue [peerId];
 					while (stack.Peek ().frameIndex <= acknowledgedFrameIndex) {
 						stack.Dequeue ();
+					}
+
+					var currentLatestAcknowledgedFrame = m_latestAcknowledgedFrame;
+					m_latestAcknowledgedFrame = acknowledgedFrameIndex;
+
+					// Tick, now that our commands have been acknowledged
+					if (Tick != null) {
+						if (TickAllAcknowledgedFrames) {
+							for (var i = currentLatestAcknowledgedFrame + 1; i <= m_latestAcknowledgedFrame; i++) {
+								Tick (i);
+							}
+						} else {
+							Tick (m_latestAcknowledgedFrame);
+						}
 					}
 					break;
 				case MessageType.Commands:
@@ -217,12 +183,12 @@ namespace HiddenSwitch.Multiplayer
 
 							var framesForPeer = m_frames [peerId];
 							if (!m_frames.ContainsKey (thisFrameIndex)) {
-								m_frames [thisFrameIndex] = new Frame ();
+								m_frames [thisFrameIndex] = new NetworkFrame ();
 								m_frames [thisFrameIndex].frameIndex = thisFrameIndex;
 							}
 
 							// Save these commands as belonging to the given peerId
-							m_frames [thisFrameIndex].commands [peerId] = new CommandList () {
+							m_frames [thisFrameIndex].commands [peerId] = new SerializedCommandList () {
 								// Store the index of where the data starts because we might be sharing
 								// this binary reader with other command lists
 								dataStartIndex = binaryReader.BaseStream.Position,
@@ -232,7 +198,8 @@ namespace HiddenSwitch.Multiplayer
 								data = binaryReader,
 								// The commands
 								commandIds = commandIds,
-								frameIndex = thisFrameIndex
+								frameIndex = thisFrameIndex,
+								peerId = peerId
 							};
 
 							// We will acknowl(int)edge the largest frame index
@@ -241,7 +208,6 @@ namespace HiddenSwitch.Multiplayer
 							// Seek to the command list length
 							binaryReader.BaseStream.Seek ((long)commandListLength, SeekOrigin.Current);
 						}
-
 
 						// If there is still data left, we are processing more lists of missing commands
 						// Otherwise, break
@@ -265,13 +231,19 @@ namespace HiddenSwitch.Multiplayer
 					// TODO: Load in the entire game state
 					// First value is the frame of this state
 					var stateFrameIndex = binaryReader.ReadInt32 ();
-					// If this value is greater than my current state, process it
-					if (stateFrameIndex > m_latestStateFrameIndex) {
+					// Are we receiving a null state?
+					var hasState = binaryReader.ReadBoolean ();
+					// If this value is greater than my current state or if I am a peer with no state,
+					// use the delivered state
+					if ((stateFrameIndex > m_latestStateFrameIndex
+					    || m_latestState == null)
+					    && hasState) {
 						// Process the state
 						TState state = new TState ();
 						state.Deserialize (binaryReader);
 						m_latestState = state;
-						m_latestStateFrameIndex = stateFrameIndex;	
+						m_latestStateFrameIndex = stateFrameIndex;
+						m_stateStartFrame = stateFrameIndex;
 					}
 
 					// Acknowledge receipt of the state
@@ -291,6 +263,7 @@ namespace HiddenSwitch.Multiplayer
 					}
 
 					if (allHaveState) {
+						AllHaveState = true;
 						// TODO: Set the game as ready to start executing
 					}
 					break;
@@ -326,44 +299,89 @@ namespace HiddenSwitch.Multiplayer
 				}
 				break;
 			case NetworkEventType.DisconnectEvent:
+				// TODO: Mark peer as disconnected
 				break;
 			}
 		}
 
+
 		/// <summary>
-		/// Executes the given commands against the given state. Modifies the state in place.
+		/// Connect to another peer running Adaptive
 		/// </summary>
-		/// <param name="state">State.</param>
-		/// <param name="commands">Commands.</param>
-		internal void ExecuteCommands (TState state, CommandList commands)
+		/// <returns>The peer.</returns>
+		/// <param name="hostName">Host name.</param>
+		/// <param name="port">Port.</param>
+		public Peer AddPeer (string hostName, int port)
 		{
-			if (commands == null
-				|| commands.commandIds == null
-			    || commands.commandIds.Length == 0) {
-				// This is an empty command list. Skip it.
-				return;
+			var connectionId = Transport.Connect (hostName);
+			if (m_peers.ContainsKey (connectionId)) {
+				return m_peers [connectionId];
 			}
 
-			// Seek to the appropriate place in the stream, since we may be processing multiple command lists
-			commands.data.BaseStream.Seek (commands.dataStartIndex, SeekOrigin.Begin);
+			// TODO: Handle error
+			var peer = new Peer (connectionId);
+			// Prepare a peer record
+			m_peers.Add (connectionId, peer);
+			return peer;
+		}
 
-			for (var i = 0; i < commands.commandIds.Length; i++) {
-				// Assert that the byte matches the command byte
-				var commandId = commands.commandIds [i];
-				if (commandId != commands.data.ReadByte ()) {
-					// TODO: Throw an exception
-				}
-
-				// Execute based on the handler
-				var handler = m_commandHandlers [commandId];
-				handler.Invoke (state, commands.data);
-				// Assert that if there is another command left, that the subsequent byte
-				// matches the byte that is in the commands list for this frame
-				if (i + 1 < commands.commandIds.Length
-				    && (byte)commands.data.PeekChar () != commands.commandIds [i]) {
-					// TODO: Throw an exception
-				}
+		/// <summary>
+		/// Queues a command to send over the network at the appropriate time.
+		/// 
+		/// It is the responsibility of the caller to not let the game queue commands wildly out into the future.
+		/// </summary>
+		/// <param name="commandId">Command identifier.</param>
+		/// <param name="arguments">Arguments.</param>
+		/// <param name="frameIndex">Frame index. Defaults to the tickrate clock's frameIndex</param>
+		/// <exception cref="HiddenSwitch.Networking.LateCommandException">Thrown if you are trying to queue a command for a frame that
+		/// is not the latest unacknowledged frame for a given peer.</exception>
+		public void QueueCommand (byte commandId, CommandArguments arguments, int frameIndex = int.MinValue)
+		{
+			if (frameIndex == int.MinValue) {
+				frameIndex = ElapsedFrameCount;
 			}
+			// If this command is coming late, throw an exception
+			if (frameIndex < ElapsedFrameCount) {
+				throw new LateCommandException () {
+					CommandId = commandId,
+					Arguments = arguments,
+					FrameIndex = frameIndex
+				};
+			}
+
+			// Queue commands for the other peers
+			var command = new CommandWithArguments () {
+				arguments = arguments,
+				commandId = commandId
+			};
+
+			foreach (var peer in m_peers) {
+				if (!peer.Value.Id.HasValue) {
+					// TODO: Handle peers which aren't connected yet.
+					continue;
+				}
+				var peerId = peer.Value.Id.GetValueOrDefault ();
+				// Should we enqueue on this frame? First check if there is anything in the queue
+				if (m_unacknowledgedCommandQueue [peerId].Count > 0) {
+					// Look at the latest item on the queue
+					var latestQueue = m_unacknowledgedCommandQueue [peerId].Peek ();
+					// If we are queuing the current frame still, make sure this command gets serialized into this frame's commands list
+					if (latestQueue.frameIndex == frameIndex) {
+						latestQueue.queuedCommands.Add (command);
+						// We have enqueued the command in the appropriate place, we can move onto the next peer
+						continue;
+					} else if (latestQueue.frameIndex > frameIndex) {
+						
+					}
+					// Otherwise, we're queueing something newer, so we will just stick it on the queue.
+				}
+
+				m_unacknowledgedCommandQueue [peerId].Enqueue (new UnacknowledgedCommands () { 
+					frameIndex = frameIndex,
+					queuedCommands = new List<CommandWithArguments> (new CommandWithArguments[] { command })
+				});
+			}
+			// The commands themselves get sent in network clock tick's event
 		}
 
 		/// <summary>
@@ -373,16 +391,33 @@ namespace HiddenSwitch.Multiplayer
 		/// <param name="peerId">Peer identifier.</param>
 		internal void SendCommands (PeerId peerId)
 		{
+			// TODO: When we're sending commands to multiple peers, cache this work
 			var memoryStream = new MemoryStream (m_sendCommandBuffer);
 			var binaryWriter = new BinaryWriter (memoryStream);
 
+			// Send the packet
+			// Find the connectionId for this peer
+			var connectionId = 0;
+			foreach (var peer in m_peers) {
+				if (peer.Value.Id == peerId) {
+					connectionId = peer.Key;
+				}
+			}
+
+			byte sendError;
+
+			// If there are no unacknowledged frames
 			var unacknowledgedQueuedCommands = m_unacknowledgedCommandQueue [peerId];
 
+			// If there are no unacknowledged commands, send empty commands with the tickrate clock's frame index
 			if (unacknowledgedQueuedCommands.Count == 0) {
 				binaryWriter.Write (MessageType.EmptyCommands);
-			} else {
-				binaryWriter.Write (MessageType.Commands);
+				binaryWriter.Write (Clock.ElapsedFrameCount);
+				Transport.Send (connectionId, Transport.UnreliableChannelId, m_sendCommandBuffer, 0, (int)binaryWriter.BaseStream.Position, out sendError);
+				return;
 			}
+
+			binaryWriter.Write (MessageType.Commands);
 
 			foreach (var queuedCommands in unacknowledgedQueuedCommands) {
 				// Write the frame index
@@ -421,35 +456,29 @@ namespace HiddenSwitch.Multiplayer
 				binaryWriter.Seek ((int)lastPosition, SeekOrigin.Begin);
 			}
 
-			// Send the packet
-			// Find the connectionId for this peer
-			var connectionId = 0;
-			foreach (var peer in m_peers) {
-				if (peer.Value.Id == peerId) {
-					connectionId = peer.Key;
-				}
-			}
-
-			byte sendError;
-			NetworkTransport.Send (m_HostId, connectionId, m_UnreliableChannelId, m_sendCommandBuffer, (int)binaryWriter.BaseStream.Position, out sendError);
+			Transport.Send (connectionId, Transport.UnreliableChannelId, m_sendCommandBuffer, 0, (int)binaryWriter.BaseStream.Position, out sendError);
 		}
 
 		/// <summary>
 		/// Send the latest state recorded in this Adaptive instance.
 		/// </summary>
 		/// <param name="connectionId">Connection identifier.</param>
-		internal void SendState (int connectionId)
+		protected void SendState (int connectionId)
 		{
 			var binaryWriter = new BinaryWriter (new MemoryStream (m_sendStateBuffer));
 			// Write the message type.
 			binaryWriter.Write (MessageType.State);
 			// Write the frame index of this state
 			binaryWriter.Write (m_latestStateFrameIndex);
+			// Write whether or not the state is null
+			binaryWriter.Write (m_latestState != null);
 			// Now serialize the state
-			m_latestState.Serialize (binaryWriter);
+			if (m_latestState != null) {
+				m_latestState.Serialize (binaryWriter);
+			}
 			// Send the state
 			byte sendError;
-			NetworkTransport.Send (m_HostId, connectionId, m_ReliableChannelId, m_sendStateBuffer, (int)binaryWriter.BaseStream.Position, out sendError);
+			Transport.Send (connectionId, Transport.ReliableChannelId, m_sendStateBuffer, 0, (int)binaryWriter.BaseStream.Position, out sendError);
 		}
 
 		/// <summary>
@@ -457,31 +486,111 @@ namespace HiddenSwitch.Multiplayer
 		/// </summary>
 		/// <param name="frameIndex">Frame index.</param>
 		/// <param name="connectionId">Connection identifier.</param>
-		internal void AcknowledgeCommands (int frameIndex, int connectionId)
+		protected void AcknowledgeCommands (int frameIndex, int connectionId)
 		{
 			// A five byte buffer. The first byte is the message type of acknowledge, the next
 			// four bytes are the frame index we are acknowledging.
-
 			var acknowledgeBuffer = new byte[5];
 			acknowledgeBuffer [0] = MessageType.AcknowledgeCommands;
 			var frameIndexBytes = BitConverter.GetBytes (frameIndex);
 			frameIndexBytes.CopyTo (acknowledgeBuffer, 1);
 			byte acknowledgeError;
-			NetworkTransport.Send (m_HostId, connectionId, m_UnreliableChannelId, acknowledgeBuffer, 5, out acknowledgeError);
+			Transport.Send (connectionId, Transport.UnreliableChannelId, acknowledgeBuffer, 0, 5, out acknowledgeError);
 		}
 
 		/// <summary>
 		/// Send an acknowledgement of state.
 		/// </summary>
 		/// <param name="connectionId">Connection identifier.</param>
-		internal void AcknowledgeState (int connectionId)
+		protected void AcknowledgeState (int connectionId)
 		{
 			var acknowledgeBuffer = new byte[1] { MessageType.AcknowledgeState };
 
 			byte acknowledgeError;
-			NetworkTransport.Send (m_HostId, connectionId, m_ReliableChannelId, acknowledgeBuffer, 1, out acknowledgeError);
+			Transport.Send (connectionId, Transport.ReliableChannelId, acknowledgeBuffer, 0, 1, out acknowledgeError);
+		}
+
+		/// <summary>
+		/// When the network clock ticks, try to send commands.
+		/// </summary>
+		/// <param name="frameIndex">Frame index.</param>
+		protected void OnNetworkClockTick (int frameIndex)
+		{
+			// Send my commands to all my peers
+			foreach (var peer in m_peers) {
+				SendCommands (peer.Key);
+			}
+		}
+
+		/// <summary>
+		/// Networking ticks with the frame index of the latest frame acknowledged by other peers. Currently
+		/// only supports two player. If the peer acknowledges a frame that isn't 1 away from the current latest acknowledge
+		/// frame, set <see cref="HiddenSwitch.Network`1.TickAllAcknowledgedFrames"/> to true if you would like a tick
+		/// for all the intermediate frames.
+		/// </summary>
+		public event Action<int> Tick;
+
+		/// <summary>
+		/// The latest acknowledged frame from the other peers.
+		/// </summary>
+		/// <value>The current frame.</value>
+		public int ElapsedFrameCount {
+			get {
+				return LatestAcknowledgedFrame;
+			}
+		}
+
+		/// <summary>
+		/// The latest acknowledged frame from the other peers.
+		/// </summary>
+		/// <value>The current frame.</value>
+		public int LatestAcknowledgedFrame {
+			get {
+				return m_latestAcknowledgedFrame;
+			}
+		}
+
+		/// <summary>
+		/// The first frame we synchronized to (the state frame typically).
+		/// </summary>
+		/// <value>The start frame.</value>
+		public int StartFrame {
+			get {
+				return StateStartFrame;
+			}
+		}
+
+		public int StateStartFrame {
+			get {
+				return m_stateStartFrame;
+			}
+		}
+
+
+		/// <summary>
+		/// Raised when all the peers have the current state.
+		/// </summary>
+		public event Action StateSynchronized;
+
+		/// <summary>
+		/// Do all the peers have valid state?
+		/// </summary>
+		/// <value><c>true</c> if all have state; otherwise, <c>false</c>.</value>
+		public bool AllHaveState {
+			get {
+				return m_allHaveState;
+			}
+			protected set {
+				if (m_allHaveState == value) {
+					return;
+				}
+
+				m_allHaveState = value;
+
+				if (StateSynchronized != null) {
+					StateSynchronized ();
+				}
+			}
 		}
 	}
-
-
 }

@@ -11,18 +11,12 @@ namespace HiddenSwitch.Multiplayer
 {
 
 	/// <summary>
-	/// A command list
+	/// Frame data
 	/// </summary>
-	public class CommandList
+	public class NetworkFrame
 	{
-		/// <summary>
-		/// Which frame index (point in time) does this frame instance correspond to?
-		/// </summary>
 		public int frameIndex;
-		public long dataStartIndex;
-		public ushort dataLength;
-		public BinaryReader data;
-		public byte[] commandIds;
+		public Dictionary<PeerId, SerializedCommandList> commands = new Dictionary<PeerId, SerializedCommandList> (2);
 	}
 	
 }

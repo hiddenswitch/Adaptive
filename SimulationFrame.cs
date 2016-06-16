@@ -6,17 +6,15 @@ using System.Collections;
 using System.Collections.Generic;
 using PeerId = System.Int32;
 using ConnectionId = System.Int32;
+using FrameIndex = System.Int32;
 
 namespace HiddenSwitch.Multiplayer
 {
 
-	/// <summary>
-	/// Frame data
-	/// </summary>
-	public class Frame
+	public sealed class SimulationFrame
 	{
-		public int frameIndex;
-		public Dictionary<PeerId, CommandList> commands = new Dictionary<PeerId, CommandList> (3);
+		public FrameIndex frameIndex;
+		public IList<CommandWithArgumentsAndPeer> Commands = new List<CommandWithArgumentsAndPeer> ();
 	}
 	
 }

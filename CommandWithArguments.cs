@@ -11,12 +11,11 @@ namespace HiddenSwitch.Multiplayer
 {
 
 	/// <summary>
-	/// A list of unacknowledged commands
+	/// Represents a single queued command
 	/// </summary>
-	public class UnacknowledgedCommands
+	public class CommandWithArguments
 	{
-		public int frameIndex;
-		public IList<CommandWithArguments> queuedCommands;
+		public byte commandId;
+		public CommandArguments arguments;
 	}
-	
 }
