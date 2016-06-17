@@ -17,13 +17,13 @@ namespace HiddenSwitch.Multiplayer
 
 		protected int m_elapsedFrameCount;
 
-		public int ElapsedFrameCount { get { return m_elapsedFrameCount + StartFrame; } }
+		public virtual int ElapsedFrameCount { get { return m_elapsedFrameCount + StartFrame; } }
 
-		public int FramesPerSecond { get; protected set; }
+		public virtual int FramesPerSecond { get; protected set; }
 
-		public bool EndOfFrame { get; protected set; }
+		public virtual bool EndOfFrame { get; protected set; }
 
-		public int StartFrame { get; protected set; }
+		public virtual int StartFrame { get; protected set; }
 
 		internal TimeClockHelper m_timeClockHelper;
 
@@ -42,7 +42,7 @@ namespace HiddenSwitch.Multiplayer
 			}
 		}
 
-		internal void HelperTick ()
+		internal virtual void HelperTick ()
 		{
 			if (Tick != null) {
 				Tick (ElapsedFrameCount);
@@ -50,10 +50,15 @@ namespace HiddenSwitch.Multiplayer
 			m_elapsedFrameCount++;
 		}
 
+		protected virtual void OnHelperTick ()
+		{
+			HelperTick ();
+		}
+
 		/// <summary>
 		/// Stops the timer.
 		/// </summary>
-		public void Stop ()
+		public virtual void Stop ()
 		{
 			m_timeClockHelper.running = false;
 		}
@@ -61,7 +66,7 @@ namespace HiddenSwitch.Multiplayer
 		/// <summary>
 		/// Starts the timer.
 		/// </summary>
-		public void Start ()
+		public virtual void Start ()
 		{
 			m_timeClockHelper.running = true;
 		}
@@ -70,7 +75,7 @@ namespace HiddenSwitch.Multiplayer
 		/// Is the timer running?
 		/// </summary>
 		/// <value><c>true</c> if running; otherwise, <c>false</c>.</value>
-		public bool Running {
+		public virtual bool Running {
 			get {
 				return m_timeClockHelper.running;
 			}

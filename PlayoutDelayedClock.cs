@@ -25,10 +25,25 @@ namespace HiddenSwitch.Multiplayer
 		/// <value>The peer count.</value>
 		public byte PeerCount { get; set; }
 
+
+		protected TimeClock m_timeClock;
+
 		/// <summary>
 		/// Use a time clock to smoothly execute commands until it needs to be stopped for buffering
 		/// </summary>
-		public TimeClock TimeClock { get; protected set; }
+		public TimeClock TimeClock { 
+			get {
+				return m_timeClock;
+			} 
+			set {
+				if (m_timeClock != null) {
+					m_timeClock.Tick -= OnTimeClockTick;
+				}
+
+				m_timeClock = value;
+				m_timeClock.Tick += OnTimeClockTick;
+			}
+		}
 
 		/// <summary>
 		/// What should be considered as the first frame of the simulation? This frame will consider
@@ -66,7 +81,6 @@ namespace HiddenSwitch.Multiplayer
 			PlayoutDelayFrameCount = playoutDelayFrameCount;
 			FirstFrameIndex = firstFrameIndex;
 			TimeClock = new TimeClock (autostart: false, framesPerSecond: simulationRate);
-			TimeClock.Tick += OnTimeClockTick;
 		}
 
 		/// <summary>

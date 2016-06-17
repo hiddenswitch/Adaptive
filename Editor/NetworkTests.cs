@@ -23,10 +23,5 @@ namespace HiddenSwitch.Multiplayer.Tests
 			Assert.IsTrue (network2.AllHaveState);
 			Assert.AreEqual (network1.LatestState.count, 52);
 		}
-
-		public class SystemTimerClock : IClock {
-			
-		}
 	}
-
 }
