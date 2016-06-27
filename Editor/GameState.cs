@@ -34,6 +34,10 @@ namespace HiddenSwitch.Multiplayer.Tests
 				location = this.location
 			};
 		}
+
+		public GameStateWithInputs () : base ()
+		{
+		}
 	}
 
 	/// <summary>

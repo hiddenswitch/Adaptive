@@ -6,28 +6,6 @@ using System;
 
 namespace HiddenSwitch.Multiplayer.Tests
 {
-	public class GameManager : IAdaptiveDelegate<GameStateWithInputs, GameInput>
-	{
-		#region IAdaptiveDelegate implementation
-
-		public Vector3 testInput;
-
-		public GameInput GetCurrentInput ()
-		{
-			return new GameInput () {
-				direction = testInput
-			};
-		}
-
-		public GameStateWithInputs GetStartState ()
-		{
-			return new GameStateWithInputs ();
-		}
-
-		#endregion
-		
-	}
-
 	[TestFixture]
 	public class AdaptiveTests
 	{
