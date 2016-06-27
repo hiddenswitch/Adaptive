@@ -16,21 +16,21 @@ namespace HiddenSwitch.Multiplayer
 	internal static class MessageType
 	{
 		/// <summary>
-		/// This message is an acknowledgement of commands.
+		/// This message is an acknowledgement of commands and input.
 		/// </summary>
-		internal const byte AcknowledgeCommands = 1;
+		internal const byte AcknowledgeInput = 1;
 		/// <summary>
 		/// This message is a complete game state.
 		/// </summary>
 		internal const byte State = 2;
 		/// <summary>
-		/// This message contains commands.
+		/// This message contains commands and input
 		/// </summary>
-		internal const byte Commands = 3;
+		internal const byte Input = 3;
 		/// <summary>
-		/// This message contains no commands.
+		/// This message contains no commands or input
 		/// </summary>
-		internal const byte EmptyCommands = 4;
+		internal const byte Empty = 4;
 		/// <summary>
 		/// This message contains information about the peer
 		/// </summary>

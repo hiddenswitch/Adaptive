@@ -13,9 +13,15 @@ namespace HiddenSwitch.Multiplayer
 	/// </summary>
 	internal class TimeClockHelper : MonoBehaviour
 	{
-		internal int framesPerSecond = 30;
+		internal int framesPerSecond = 60;
 		internal bool endOfFrame;
 		internal TimeClock timeClock;
+		protected float m_lastTime;
+
+		public long ElapsedTicks {
+			get;
+			protected set;
+		}
 
 		internal bool running;
 
@@ -32,6 +38,7 @@ namespace HiddenSwitch.Multiplayer
 		IEnumerator Timer ()
 		{
 			while (true) {
+				m_lastTime = Time.time;
 				while (running) {
 					if (endOfFrame) {
 						yield return new WaitForEndOfFrame ();
@@ -43,6 +50,10 @@ namespace HiddenSwitch.Multiplayer
 
 						yield return new WaitForSeconds (1.0f / (float)framesPerSecond);
 					}
+
+					var currentTime = Time.time;
+					ElapsedTicks = (long)((currentTime - m_lastTime) * 10e10);
+					m_lastTime = currentTime;
 
 					timeClock.HelperTick ();
 				}

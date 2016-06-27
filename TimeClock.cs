@@ -14,8 +14,15 @@ namespace HiddenSwitch.Multiplayer
 	public class TimeClock : IClock
 	{
 		public event Action<int> Tick;
+		public event Action<int> LateTick;
 
 		protected int m_elapsedFrameCount;
+
+		public virtual long ElapsedTicks {
+			get {
+				return m_timeClockHelper.ElapsedTicks;
+			}
+		}
 
 		public virtual int ElapsedFrameCount { get { return m_elapsedFrameCount + StartFrame; } }
 
@@ -23,11 +30,15 @@ namespace HiddenSwitch.Multiplayer
 
 		public virtual bool EndOfFrame { get; protected set; }
 
-		public virtual int StartFrame { get; protected set; }
+		public virtual int StartFrame { get; set; }
 
 		internal TimeClockHelper m_timeClockHelper;
 
-		public TimeClock (bool autostart = true, int framesPerSecond = 30, bool endOfFrame = false, int startFrame = 0)
+		public TimeClock ()
+		{
+		}
+
+		public TimeClock (int framesPerSecond, bool autostart = true, bool endOfFrame = false, int startFrame = 0)
 		{
 			FramesPerSecond = framesPerSecond;
 			EndOfFrame = endOfFrame;
@@ -44,10 +55,13 @@ namespace HiddenSwitch.Multiplayer
 
 		internal virtual void HelperTick ()
 		{
+			m_elapsedFrameCount++;
 			if (Tick != null) {
 				Tick (ElapsedFrameCount);
 			}
-			m_elapsedFrameCount++;
+			if (LateTick != null) {
+				LateTick (ElapsedFrameCount);
+			}
 		}
 
 		protected virtual void OnHelperTick ()

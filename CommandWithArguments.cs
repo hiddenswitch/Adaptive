@@ -15,7 +15,7 @@ namespace HiddenSwitch.Multiplayer
 	/// </summary>
 	public class CommandWithArguments
 	{
-		public byte commandId;
-		public CommandArguments arguments;
+		public byte CommandId;
+		public CommandArguments Arguments;
 	}
 }

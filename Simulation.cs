@@ -10,16 +10,13 @@ using FrameIndex = System.Int32;
 
 namespace HiddenSwitch.Multiplayer
 {
-	public delegate void SimulationCommandHandler (State mutableState, CommandArguments arguments, PeerId peerId, FrameIndex frameIndex);
-	public delegate void SimulationCommandHandler<TState, TCommandArguments> (TState mutableState, TCommandArguments arguments, PeerId peerId, FrameIndex frameIndex)
-		where TCommandArguments : CommandArguments, new()
-		where TState : State, new();
-
-	public delegate void SimulationRenderedHandler<TState> (TState immutableState, int renderFrameIndex)
-		where TState : State, new();
-	
-	public class Simulation<TState> : IClock
+	public delegate void SimulationInputHandler<TState, TInput> (TState mutableState, PeerId peerId, TInput input, FrameIndex frameIndex)
 		where TState : State, new()
+		where TInput : Input, new();
+	
+	public class Simulation<TState, TInput> : IClock
+		where TState : State, new()
+		where TInput : Input, new()
 	{
 		private IClock m_executionClock;
 
@@ -35,26 +32,29 @@ namespace HiddenSwitch.Multiplayer
 			}
 		}
 
-		protected Dictionary<byte, SimulationCommandHandler> m_commandHandlers = new Dictionary<byte, SimulationCommandHandler> ();
 		protected Dictionary<FrameIndex, SimulationFrame> m_frames = new Dictionary<FrameIndex, SimulationFrame> ();
 		protected TState m_latestState;
+
+		public int FrameBuffer { get; set; }
 
 		/// <summary>
 		/// Get the latest state from this simulation.
 		/// </summary>
 		/// <value>The state.</value>
-		public TState State {
+		public TState LatestState {
 			get {
-				return m_latestState;
+				return m_latestState == null ? null : (TState)m_latestState.Clone ();
+			}
+			set {
+				m_latestState = value;
 			}
 		}
 
-		public event SimulationRenderedHandler<TState> Rendered;
-
-		public Simulation (IClock executionClock, TState startingState = null)
+		public Simulation (IClock executionClock, TState startingState = null, int frameBuffer = 4)
 		{
 			ExecutionClock = executionClock;
-			m_latestState = startingState ?? new TState ();
+			m_latestState = startingState;
+			FrameBuffer = frameBuffer;
 		}
 
 		public SimulationFrame this [FrameIndex frameIndex] {
@@ -62,7 +62,7 @@ namespace HiddenSwitch.Multiplayer
 				return GetFrame (frameIndex);
 			}
 			set {
-				SetFrame (frameIndex, value);
+				SetOrExtendFrame (frameIndex, value);
 			}
 		}
 
@@ -75,84 +75,89 @@ namespace HiddenSwitch.Multiplayer
 			}
 		}
 
-		public void SetFrame (FrameIndex frameIndex, SimulationFrame value)
+		/// <summary>
+		/// A function that takes a mutable gamestate, an input and the current frame and mutates
+		/// the gamestate to reflect the latest input.
+		/// </summary>
+		/// <value>The input handler.</value>
+		public SimulationInputHandler<TState, TInput> InputHandler {
+			get;
+			set;
+		}
+
+		public void SetOrExtendFrame (FrameIndex frameIndex, SimulationFrame value)
 		{
-			m_frames [frameIndex] = value;
+			// If the frame already exists, extend the current simulation frame with the provided frame
+			if (m_frames.ContainsKey (frameIndex)) {
+				var currentFrame = m_frames [frameIndex];
+				foreach (var inputData in value.Inputs) {
+					currentFrame.Inputs [inputData.Key] = inputData.Value;
+				}
+			} else {
+				m_frames [frameIndex] = value;
+			}
 		}
 
 		/// <summary>
 		/// Execute commands for the given frame.
 		/// </summary>
-		/// <param name="frameIndex">Frame index.</param>
-		void OnExecutionClockTick (FrameIndex frameIndex)
+		/// <param name="elapsedFrames">How many frames have elapsed?</param>
+		void OnExecutionClockTick (FrameIndex elapsedFrames)
 		{
-			// In case something is hanging on to an old reference of the state, clone.
-			// Note, code which never drops a reference to the state variable will leak memory here.
-			var nextState = (TState)m_latestState.Clone ();
+			// Execute the frame prior to the one that just elapsed
+			var frameIndex = elapsedFrames - 1;
+			var nextState = m_latestState;
 
 			var frame = this [frameIndex];
-			// If there is no frame, no commands were issued for this frame index.
-			if (frame != null) {
-				foreach (var command in frame.Commands) {
-					m_commandHandlers [command.commandId].Invoke (nextState, command.arguments, command.peerId, frameIndex);
-				}	
-			}
 
+			// Execute inputs
+			if (InputHandler != null) {
+				foreach (var inputWithPeer in frame.Inputs) {
+					InputHandler (nextState, inputWithPeer.Key, (TInput)inputWithPeer.Value, frameIndex);
+				}
+			} else {
+				throw new InvalidOperationException ("No InputHandler was specified on this simulation.");
+			}
 
 			m_latestState = nextState;
 
-			// Clear out this frame since it has executed
-			this.m_frames.Remove (frameIndex);
-		}
-
-		/// <summary>
-		/// Adds the command handler.
-		/// </summary>
-		/// <param name="id">Identifier.</param>
-		/// <param name="handler">Handler.</param>
-		/// <typeparam name="TCommandArguments">The 1st type parameter.</typeparam>
-		public void AddCommandHandler<TCommandArguments> (byte id, SimulationCommandHandler<TState, TCommandArguments> handler)
-			where TCommandArguments : CommandArguments, new()
-		{
-			m_commandHandlers.Add (id, delegate(State mutableState, CommandArguments arguments, int peerId, int frameIndex) {
-				TCommandArguments typedArguments = arguments as TCommandArguments;
-				TState typedState = mutableState as TState;
-				if (handler != null) {
-					handler (typedState, typedArguments, peerId, frameIndex);
-				}
-			});
-		}
-
-		/// <summary>
-		/// Calls a command with the given id and arguments. This command is sent with the current rendering frame as its time,
-		/// not the latest frame (which may be possible to render, but isn't rendered yet).
-		/// </summary>
-		/// <param name="id">Identifier.</param>
-		/// <param name="command">Command.</param>
-		/// <param name="frameIndex">The execution frame this command should run against. When using a playout delayed clock, pass in the
-		/// last executable frame. This could depend on the type of command.</param> 
-		/// <typeparam name="TCommandArguments">The 1st type parameter.</typeparam>
-		public virtual void CallCommand<TCommandArguments> (byte id, TCommandArguments command, PeerId peerId, FrameIndex? frameIndex = null)
-			where TCommandArguments : CommandArguments
-		{
-			int theFrameIndex = frameIndex.HasValue ? frameIndex.GetValueOrDefault() : ElapsedFrameCount;
-			if (!m_frames.ContainsKey (theFrameIndex)) {
-				m_frames [theFrameIndex] = new SimulationFrame ();
+			// Clear out the frame since it has executed
+			var oldFrameOffset = -FrameBuffer;
+			while (m_frames.ContainsKey (frameIndex + oldFrameOffset)) {
+				this.m_frames.Remove (frameIndex + oldFrameOffset);
+				oldFrameOffset--;
 			}
 
-			var frame = m_frames [theFrameIndex];
+			// Tick
+			if (Tick != null) {
+				Tick (elapsedFrames);
+			}
+			if (LateTick != null) {
+				LateTick (elapsedFrames);
+			}
+		}
 
-			frame.Commands.Add (new CommandWithArgumentsAndPeer () {
-				arguments = command,
-				commandId = id,
-				peerId = peerId
-			});
+		/// <summary>
+		/// Sets the latest input from the given peer.
+		/// </summary>
+		/// <returns>The latest input.</returns>
+		/// <param name="input">Input.</param>
+		/// <param name="peerId">Peer identifier.</param>
+		public void SetInput (TInput input, PeerId peerId, FrameIndex frameIndex)
+		{
+			if (!m_frames.ContainsKey (frameIndex)) {
+				m_frames [frameIndex] = new SimulationFrame ();
+			}
+
+			m_frames [frameIndex].Inputs [peerId] = input;
 		}
 
 		/// <summary>
 		/// Corresponds to a render tick, which may be offset / interpolated / smoothed with respect to the execution clock.
 		/// </summary>
 		public event Action<int> Tick;
+
+		public event Action<int> LateTick;
 
 		/// <summary>
 		/// Gets the number of executed frames.
@@ -168,7 +173,23 @@ namespace HiddenSwitch.Multiplayer
 			get {
 				return ExecutionClock.StartFrame;
 			}
+			set {
+				ExecutionClock.StartFrame = value;
+			}
+		}
+
+		public void SetStartState (TState state, FrameIndex frameIndex)
+		{
+			ExecutionClock.StartFrame = frameIndex;
+			m_latestState = (TState)state.Clone ();
 		}
 	}
-	
+
+	public class Simulation<TState> : Simulation<TState, Input>
+		where TState: State, new()
+	{
+		public Simulation (IClock executionClock, TState startingState = null) : base (executionClock, startingState)
+		{
+		}
+	}
 }

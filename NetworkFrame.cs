@@ -16,7 +16,11 @@ namespace HiddenSwitch.Multiplayer
 	public class NetworkFrame
 	{
 		public int frameIndex;
-		public Dictionary<PeerId, SerializedCommandList> commands = new Dictionary<PeerId, SerializedCommandList> (2);
+		public Dictionary<PeerId, PeerFrameData> data = new Dictionary<PeerId, PeerFrameData> (2);
 	}
-	
+
+	public class PeerFrameData
+	{
+		public Input input;
+	}
 }

@@ -1,5 +1,6 @@
 ﻿using UnityEngine;
 using System.Collections;
+using System.Collections.Generic;
 using NUnit.Framework;
 using HiddenSwitch.Multiplayer;
 
@@ -9,25 +10,121 @@ namespace HiddenSwitch.Multiplayer.Tests
 	public class SimulationTests
 	{
 		[Test]
-		public void ExecutesCorrectly ()
+		public void ExecutesInputs ()
 		{
 			var manualClock = new ManualClock ();
-			var comparisonState = new GameState ();
-			var simulation = new Simulation<GameState> (manualClock);
-			simulation.AddCommandHandler<IncrementArguments> (TestStateCommands.Increment, delegate(GameState mutableState, IncrementArguments arguments, int peerId, int frameIndex) {
-				mutableState.Increment (arguments);
-			});
+			var comparisonState = new GameStateWithInputs ();
+			var simulation = new Simulation<GameStateWithInputs, GameInput> (manualClock, new GameStateWithInputs ());
+			simulation.InputHandler = delegate(GameStateWithInputs mutableState, int peerId, GameInput input, int frameIndex) {
+				mutableState.Move (input.direction);
+			};
+			var myPeerId = 0;
+			var moves = 20;
+			var systemRandom = new System.Random ();
+			for (var i = 0; i < moves; i++) {
+				var direction = new Vector3 ((float)systemRandom.NextDouble (), (float)systemRandom.NextDouble (), (float)systemRandom.NextDouble ());
 
-			var qty = 20;
-			for (var i = 0; i < qty; i++) {
-				if (i % 2 == 0) {
-					comparisonState.Increment (new IncrementArguments () { amount = 1 });
-					simulation.CallCommand<IncrementArguments> (TestStateCommands.Increment, new IncrementArguments () { amount = 1 }, 0);
-				}
+				comparisonState.location += direction;
+				var input = new GameInput () { direction = direction };
+				simulation.SetInput (input, myPeerId, simulation.ElapsedFrameCount);
 				manualClock.Step ();
 			}
 
-			Assert.AreEqual (comparisonState.count, simulation.State.count);
+			Assert.AreEqual (comparisonState.location, simulation.LatestState.location);
 		}
+
+		[Test]
+		public void ExtendsFrames ()
+		{
+			var manualClock = new ManualClock ();
+			var comparisonState = new GameStateWithInputs ();
+			var simulation = new Simulation<GameStateWithInputs, GameInput> (manualClock, new GameStateWithInputs ());
+			simulation.InputHandler = delegate(GameStateWithInputs mutableState, int peerId, GameInput input, int frameIndex) {
+				mutableState.Move (input.direction);
+			};
+			var moves = 20;
+			var systemRandom = new System.Random ();
+			for (var i = 0; i < moves; i++) {
+				var direction = new Vector3 ((float)systemRandom.NextDouble (), (float)systemRandom.NextDouble (), (float)systemRandom.NextDouble ());
+
+				comparisonState.location += direction;
+				var input = new GameInput () { direction = direction };
+				simulation.SetInput (input, 0, simulation.ElapsedFrameCount);
+
+				direction = new Vector3 ((float)systemRandom.NextDouble (), (float)systemRandom.NextDouble (), (float)systemRandom.NextDouble ());
+
+				comparisonState.location += direction;
+				input = new GameInput () { direction = direction };
+				simulation.SetOrExtendFrame (i, new SimulationFrame () {
+					FrameIndex = simulation.ElapsedFrameCount,
+					Inputs = new Dictionary<int, Input> () {
+						{ 1, input }
+					}
+				});
+
+				manualClock.Step ();
+			}
+			Assert.AreEqual (comparisonState.location, simulation.LatestState.location);
+		}
+
+		[Test]
+		public void ExecutesTwoPeersInputs ()
+		{
+			var manualClock = new ManualClock ();
+			var comparisonState = new GameStateWithInputs ();
+			var simulation = new Simulation<GameStateWithInputs, GameInput> (manualClock, new GameStateWithInputs ());
+			simulation.InputHandler = delegate(GameStateWithInputs mutableState, int peerId, GameInput input, int frameIndex) {
+				mutableState.Move (input.direction);
+			};
+			var moves = 20;
+			var systemRandom = new System.Random ();
+			for (var i = 0; i < moves; i++) {
+				var direction = new Vector3 ((float)systemRandom.NextDouble (), (float)systemRandom.NextDouble (), (float)systemRandom.NextDouble ());
+
+				comparisonState.location += direction;
+				var input = new GameInput () { direction = direction };
+				simulation.SetInput (input, 0, simulation.ElapsedFrameCount);
+
+				direction = new Vector3 ((float)systemRandom.NextDouble (), (float)systemRandom.NextDouble (), (float)systemRandom.NextDouble ());
+
+				comparisonState.location += direction;
+				input = new GameInput () { direction = direction };
+				simulation.SetInput (input, 1, simulation.ElapsedFrameCount);
+
+				manualClock.Step ();
+			}
+			Assert.AreEqual (comparisonState.location, simulation.LatestState.location);
+
+		}
+
+		[Test]
+		public void BuffersFrames ()
+		{
+			var manualClock = new ManualClock ();
+			var comparisonState = new GameStateWithInputs ();
+			var simulation = new Simulation<GameStateWithInputs, GameInput> (manualClock, new GameStateWithInputs ());
+			simulation.InputHandler = delegate(GameStateWithInputs mutableState, int peerId, GameInput input, int frameIndex) {
+				mutableState.Move (input.direction);
+			};
+			var myPeerId = 0;
+			var moves = 20;
+			var systemRandom = new System.Random ();
+			for (var i = 0; i < moves; i++) {
+				var direction = new Vector3 ((float)systemRandom.NextDouble (), (float)systemRandom.NextDouble (), (float)systemRandom.NextDouble ());
+
+				comparisonState.location += direction;
+				var input = new GameInput () { direction = direction };
+				simulation.SetInput (input, myPeerId, simulation.ElapsedFrameCount);
+				manualClock.Step ();
+			}
+
+			var frameBuffer = simulation.FrameBuffer;
+			var j = moves - 1;
+			for (; j >= moves - frameBuffer; j--) {
+				Assert.IsNotNull (simulation [j]);
+			}
+			Assert.IsNull (simulation [j - 1]);
+		}
+
 	}
 }

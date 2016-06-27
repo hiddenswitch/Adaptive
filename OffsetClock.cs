@@ -26,6 +26,9 @@ namespace HiddenSwitch.Multiplayer
 			get {
 				return InputClock.StartFrame;
 			}
+			set {
+				InputClock.StartFrame = value;
+			}
 		}
 
 		/// <summary>
@@ -53,9 +56,14 @@ namespace HiddenSwitch.Multiplayer
 			if (Tick != null) {
 				Tick (OffsetElapsedFrameCount);
 			}
+
+			if (LateTick != null) {
+				LateTick (OffsetElapsedFrameCount);
+			}
 		}
 
 		public event Action<int> Tick;
+		public event Action<int> LateTick;
 
 		protected int OffsetElapsedFrameCount {
 			get {

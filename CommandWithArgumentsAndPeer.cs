@@ -12,6 +12,6 @@ namespace HiddenSwitch.Multiplayer
 
 	public sealed class CommandWithArgumentsAndPeer : CommandWithArguments
 	{
-		public PeerId peerId;
+		public PeerId PeerId;
 	}
 }

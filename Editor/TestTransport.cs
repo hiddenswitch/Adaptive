@@ -15,6 +15,7 @@ namespace HiddenSwitch.Multiplayer.Tests
 		public string Hostname;
 		public static System.Random random = new System.Random ();
 		public List<int> Connections = new List<int> ();
+		public bool Logging = false;
 
 		public TestTransport (string hostname)
 		{
@@ -30,6 +31,9 @@ namespace HiddenSwitch.Multiplayer.Tests
 
 		public void Send (int destinationId, int channelId, byte[] buffer, int startIndex, int length, out byte error)
 		{
+			if (Logging) {
+				System.Console.WriteLine ("S {0}: {1} length {2}", Hostname, buffer.Length > 0 ? buffer [0] : -1, length);
+			}
 			if (!transports.ContainsKey (destinationId)) {
 				error = 1;
 				return;
@@ -62,6 +66,9 @@ namespace HiddenSwitch.Multiplayer.Tests
 		public void RaiseReceived (int connectionId, int channelId, UnityEngine.Networking.NetworkEventType eventType, byte[] buffer, int startIndex, int length, out byte error)
 		{
 			error = 0;
+			if (Logging) {
+				System.Console.WriteLine ("--> R {0}: {1} length {2}", Hostname, buffer.Length > 0 ? buffer [0] : -1, length);
+			}
 			if (Received != null) {
 				Received (connectionId, channelId, eventType, buffer, startIndex, length, error);
 			}

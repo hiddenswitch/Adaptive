@@ -33,9 +33,14 @@ namespace HiddenSwitch.Multiplayer
 
 		public bool HasState { get; set; }
 
+		public UnacknowledgedData LastUnacknoledgedData { get; set; }
+
+		public Queue<UnacknowledgedData> UnacknowledgedData { get; set; }
+
 		internal Peer (int connectionId)
 		{
 			ConnectionId = connectionId;
+			UnacknowledgedData = new Queue<HiddenSwitch.Multiplayer.UnacknowledgedData> (30 * 16);
 		}
 
 		public override int GetHashCode ()

@@ -10,9 +10,14 @@ using FrameIndex = System.Int32;
 
 namespace HiddenSwitch.Multiplayer
 {
-
 	public class PlayoutDelayedClock : ManualClock
 	{
+		public enum BufferState
+		{
+			Buffering,
+			Buffered
+		}
+
 		/// <summary>
 		/// How many frames should be buffered before executing the commands that occurred during those frames?
 		/// </summary>
@@ -24,6 +29,17 @@ namespace HiddenSwitch.Multiplayer
 		/// </summary>
 		/// <value>The peer count.</value>
 		public byte PeerCount { get; set; }
+
+		protected BufferState m_bufferState;
+
+		public int PeersReadyForFrame (int frameIndex)
+		{
+			if (m_frameCommands.ContainsKey (frameIndex)) {
+				return m_frameCommands [frameIndex].PeersReady;
+			} else {
+				return 0;
+			}
+		}
 
 
 		protected TimeClock m_timeClock;
@@ -60,10 +76,17 @@ namespace HiddenSwitch.Multiplayer
 		/// in order to execute.
 		/// </summary>
 		protected Dictionary<FrameIndex, FrameReadyInfo> m_frameCommands = new Dictionary<FrameIndex, FrameReadyInfo> ();
-		/// <summary>
-		/// This is the highest index of a frame we can execute.
-		/// </summary>
+
 		protected int m_highestExecutableFrame = int.MinValue;
+
+		/// <summary>
+		/// This is the highest index of a frame we can execute
+		/// </summary>
+		public int HighestExecutableFrame {
+			get {
+				return m_highestExecutableFrame;
+			}
+		}
 
 		/// <summary>
 		/// Initializes a new instance of the <see cref="HiddenSwitch.Multiplayer.PlayoutDelayedClock"/> class.
@@ -76,11 +99,21 @@ namespace HiddenSwitch.Multiplayer
 		/// <param name="playoutDelayFrameCount">How many frames should be buffered before we start ticking?</param>
 		/// <param name="firstFrameIndex">First frame index. Set this to a nonzero value if, for example, you are connecting
 		/// to a game in progress and don't have older frame data. See <see cref="HiddenSwitch.Multiplayer.PlaoutDelayedClock.FirstFrameIndex" /></param>
-		public PlayoutDelayedClock (int simulationRate = 30, int playoutDelayFrameCount = 4, int firstFrameIndex = 0) : base ()
+		public PlayoutDelayedClock (int simulationRate = 30, int playoutDelayFrameCount = 4, int firstFrameIndex = 0, TimeClock timeClock = null) : base ()
 		{
 			PlayoutDelayFrameCount = playoutDelayFrameCount;
 			FirstFrameIndex = firstFrameIndex;
-			TimeClock = new TimeClock (autostart: false, framesPerSecond: simulationRate);
+			timeClock = timeClock ?? new TimeClock (autostart: true, framesPerSecond: simulationRate);
+			// Make sure the timeclock is started
+			timeClock.Running = true;
+			m_bufferState = BufferState.Buffering;
+
+			TimeClock = timeClock;
+			try {
+				m_highestExecutableFrame = checked(firstFrameIndex - 1 - playoutDelayFrameCount);
+			} catch (System.OverflowException e) {
+				m_highestExecutableFrame = int.MinValue + playoutDelayFrameCount;
+			}
 		}
 
 		/// <summary>
@@ -89,11 +122,11 @@ namespace HiddenSwitch.Multiplayer
 		/// 
 		/// TODO: Optimize for situations where you receive command lists for multiple frames.
 		/// </summary>
-		/// <param name="frameIndex">Frame index.</param>
+		/// <param name="elapsedFrames">The number of frames that were elapsed</param>
 		public void IncrementReadyForFrame (FrameIndex frameIndex)
 		{
 			// TODO: Analyze the rate that we receive ready frames. Then, adjust the simulation rate appropriately.
-
+//			var frameIndex = elapsedFrames - 1;
 			// Is this the first time we're seeing this frame?
 			if (!m_frameCommands.ContainsKey (frameIndex)) {
 				m_frameCommands [frameIndex] = new FrameReadyInfo ();
@@ -140,14 +173,6 @@ namespace HiddenSwitch.Multiplayer
 			}
 
 			// Note, we will remove old frame infos as they get executed.
-
-			// I have updated my highest executable frame. I should now check if I can resume my buffer.
-			if (!TimeClock.Running
-			    && TimeClock.ElapsedFrameCount - PlayoutDelayFrameCount >= m_highestExecutableFrame) {
-				// Start the clock. This will cause it to eat up the buffer, which is intended
-				// This clock is actually responsible for executing the simulation steps
-				TimeClock.Start ();
-			}
 		}
 
 		/// <summary>
@@ -163,22 +188,37 @@ namespace HiddenSwitch.Multiplayer
 			// The clock should only be started when we have enough frames buffered to ensure smooth playback.
 			// This depends on the PlayoutDelayFrameCount.
 
-			// First, check that we can execute the next frame.
-			if (m_highestExecutableFrame > ElapsedFrameCount) {
-				// Go ahead and step.
-				Step ();
-				// Clear out all the old frame infos. Keep the one for the just elapsed frame
-				// because it contains an accourate "AllPriorFramesReady" value that will propagate
-				// to future frames.
-				var staleFrameInfoIndex = ElapsedFrameCount - 1;
-				while (m_frameCommands.ContainsKey (staleFrameInfoIndex)) {
-					m_frameCommands.Remove (staleFrameInfoIndex);
-					staleFrameInfoIndex--;
+			TryStep ();
+		}
+
+		/// <summary>
+		/// Try to step this PlayoutDelayedClock if it has frames to execute, or otherwise stop the time clock and do not step.
+		/// </summary>
+		protected void TryStep ()
+		{
+			switch (m_bufferState) {
+			case BufferState.Buffered:
+				if (m_highestExecutableFrame >= ElapsedFrameCount) {
+					// Go ahead and step.
+					var staleFrameInfoIndex = ElapsedFrameCount - 1;
+					Step ();
+					// Clear out all the old frame infos.
+					while (m_frameCommands.ContainsKey (staleFrameInfoIndex)) {
+						m_frameCommands.Remove (staleFrameInfoIndex);
+						staleFrameInfoIndex--;
+					}
+				} else {
+					m_bufferState = BufferState.Buffering;
+					// Do not try stepping.
 				}
-			} else {
-				// We have exhausted our buffer. Stop the time clock, which stops the execution
-				// of the playout delayed clock until enough frame information has been buffered.
-				TimeClock.Stop ();
+				break;
+			case BufferState.Buffering:
+				if (m_highestExecutableFrame - PlayoutDelayFrameCount >= ElapsedFrameCount) {
+					m_bufferState = BufferState.Buffered;
+					// Immediately try stepping again
+					TryStep ();
+				}
+				break;
 			}
 		}
 

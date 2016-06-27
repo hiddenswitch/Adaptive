@@ -13,8 +13,9 @@ namespace HiddenSwitch.Multiplayer
 	/// <summary>
 	/// Send and receive messages over a network
 	/// </summary>
-	public class Network<TState> : IClock
+	public class Network<TState, TInput>
 		where TState : State, new()
+		where TInput : Input, new()
 	{
 		protected System.Random m_random = new System.Random ();
 
@@ -40,9 +41,20 @@ namespace HiddenSwitch.Multiplayer
 			}
 		}
 
+		protected ITransport m_transport;
+
 		public ITransport Transport {
-			get;
-			private set;
+			get {
+				return m_transport;
+			}
+			set {
+				if (m_transport != null) {
+					m_transport.Received -= HandleTransportReceive;
+				}
+
+				m_transport = value;
+				m_transport.Received += HandleTransportReceive;
+			}
 		}
 
 		public bool TickAllAcknowledgedFrames { get; set; }
@@ -55,18 +67,17 @@ namespace HiddenSwitch.Multiplayer
 			}
 			set {
 				if (m_clock != null) {
-					m_clock.Tick -= OnNetworkClockTick;
+					m_clock.LateTick -= OnNetworkClockLateTick;
 				}
 
 				m_clock = value;
-				m_clock.Tick += OnNetworkClockTick;
+				m_clock.LateTick += OnNetworkClockLateTick;
 			}
 		}
 
 		protected FrameIndex m_stateStartFrame;
-		protected Dictionary<ConnectionId, Peer> m_peers = new Dictionary<int, Peer> ();
+		protected Dictionary<ConnectionId, Peer> m_peers = new Dictionary<ConnectionId, Peer> ();
 		protected Dictionary<FrameIndex, NetworkFrame> m_frames = new Dictionary<FrameIndex, NetworkFrame> ();
-		protected Dictionary<PeerId, Queue<UnacknowledgedCommands>> m_unacknowledgedCommandQueue = new Dictionary<PeerId, Queue<UnacknowledgedCommands>> ();
 		protected TState m_latestState;
 
 		/// <summary>
@@ -77,10 +88,13 @@ namespace HiddenSwitch.Multiplayer
 			get {
 				return m_latestState;
 			}
+			set {
+				m_latestState = value;
+			}
 		}
 
 		protected int m_latestStateFrameIndex = 0;
-		protected int m_latestAcknowledgedFrame;
+		protected int m_latestAcknowledgedFrame = -1;
 		/// <summary>
 		/// A reusable command send buffer.
 		/// </summary>
@@ -138,97 +152,91 @@ namespace HiddenSwitch.Multiplayer
 				var messageType = binaryReader.ReadByte ();
 				PeerId peerId;
 				switch (messageType) {
-				case MessageType.AcknowledgeCommands:
+				case MessageType.AcknowledgeInput:
 					// Clear out my unacknowledged command lists
-					peerId = m_peers [connectionId].Id.GetValueOrDefault ();
+					var peer = GetPeer (connectionId);
 					var acknowledgedFrameIndex = binaryReader.ReadInt32 ();
-					var stack = m_unacknowledgedCommandQueue [peerId];
-					while (stack.Peek ().frameIndex <= acknowledgedFrameIndex) {
+					var stack = peer.UnacknowledgedData;
+					while (stack.Count > 0
+					       && stack.Peek ().frameIndex <= acknowledgedFrameIndex) {
 						stack.Dequeue ();
+					}
+
+					if (stack.Count == 0) {
+						peer.LastUnacknoledgedData = null;
 					}
 
 					var currentLatestAcknowledgedFrame = m_latestAcknowledgedFrame;
 					m_latestAcknowledgedFrame = acknowledgedFrameIndex;
 
 					// Tick, now that our commands have been acknowledged
-					if (Tick != null) {
-						if (TickAllAcknowledgedFrames) {
-							for (var i = currentLatestAcknowledgedFrame + 1; i <= m_latestAcknowledgedFrame; i++) {
-								Tick (i);
+					if (TickAllAcknowledgedFrames) {
+						for (var i = currentLatestAcknowledgedFrame + 1; i <= m_latestAcknowledgedFrame; i++) {
+							if (DidAcknowledgeFrame != null) {
+								DidAcknowledgeFrame (i);
 							}
-						} else {
-							Tick (m_latestAcknowledgedFrame);
+						}
+					} else {
+						if (DidAcknowledgeFrame != null) {
+							DidAcknowledgeFrame (m_latestAcknowledgedFrame);
 						}
 					}
 					break;
-				case MessageType.Commands:
-					peerId = m_peers [connectionId].Id.GetValueOrDefault ();
-					int frameIndexToAcknowledge = Int32.MinValue;
-					while (true) {
-						// Add these commands to the frame
-						// First int is the frame index
-						var thisFrameIndex = binaryReader.ReadInt32 ();
-						// Next byte is the number of commands
-						var numCommands = binaryReader.ReadByte ();
-
-						// If the number of commands is not zero, this frame has content
-						if (numCommands != 0) {
-							// Next bytes are the commands that are specified in this command list
-							var commandIds = binaryReader.ReadBytes (numCommands);
-							// Next ushort is the size of this command list. Limited to 65k
-							var commandListLength = binaryReader.ReadUInt16 ();
-							// Now the data reader is advanced to the command ID of the first command.
-							// We're ready to save the frame.
-							// Check if we have a frame already from this peer
-
-							var framesForPeer = m_frames [peerId];
-							if (!m_frames.ContainsKey (thisFrameIndex)) {
-								m_frames [thisFrameIndex] = new NetworkFrame ();
-								m_frames [thisFrameIndex].frameIndex = thisFrameIndex;
-							}
-
-							// Save these commands as belonging to the given peerId
-							m_frames [thisFrameIndex].commands [peerId] = new SerializedCommandList () {
-								// Store the index of where the data starts because we might be sharing
-								// this binary reader with other command lists
-								dataStartIndex = binaryReader.BaseStream.Position,
-								// Store the length of the command list for this frame
-								dataLength = commandListLength,
-								// A pointer to the binary reader
-								data = binaryReader,
-								// The commands
-								commandIds = commandIds,
-								frameIndex = thisFrameIndex,
-								peerId = peerId
-							};
-
-							// We will acknowl(int)edge the largest frame index
-							frameIndexToAcknowledge = Mathf.Max (frameIndexToAcknowledge, thisFrameIndex);
-
-							// Seek to the command list length
-							binaryReader.BaseStream.Seek ((long)commandListLength, SeekOrigin.Current);
+				case MessageType.Input:
+					// Interpret the incoming commands and input
+					// Get the peer we're communicating with
+					peerId = GetPeer (connectionId).Id.GetValueOrDefault ();
+					// First, handle the input frames
+					var frameIndexToAcknowledge = binaryReader.ReadInt32 ();
+					var inputCount = binaryReader.ReadByte ();
+					var startFrameIndex = frameIndexToAcknowledge - inputCount + 1;
+					for (var frameIndex = startFrameIndex; frameIndex < inputCount + startFrameIndex; frameIndex++) {
+						if (!m_frames.ContainsKey (frameIndex)) {
+							m_frames [frameIndex] = new NetworkFrame ();
+							m_frames [frameIndex].frameIndex = frameIndex;
+							m_frames [frameIndex].data [peerId] = new PeerFrameData ();
 						}
+						var frameData = m_frames [frameIndex].data [peerId];
+						if (frameIndex == startFrameIndex) {
+							// Always deserialize the first input
+							frameData.input = new TInput ();
+							frameData.input.Deserialize (binaryReader);
+						} else {
+							// Read a bool to see if the input differs
+							var isInputDifferentFromPreviousFrame = binaryReader.ReadBoolean ();
+							if (isInputDifferentFromPreviousFrame) {
+								frameData.input = new TInput ();
+								frameData.input.Deserialize (binaryReader);
+							} else {
+								frameData.input = (TInput)m_frames [frameIndex - 1].data [peerId].input.Clone ();
+							}
+						}
+					}
 
-						// If there is still data left, we are processing more lists of missing commands
-						// Otherwise, break
-						var hasNoData = binaryReader.PeekChar () == -1;
-						if (hasNoData) {
-							break;
+					// Always tick all received frames
+					if (DidReceiveFrame != null) {
+						for (var frameIndex = startFrameIndex; frameIndex < inputCount + startFrameIndex; frameIndex++) {
+							DidReceiveFrame (frameIndex);
 						}
 					}
 
 					// Reply with an acknowledge for the commands
-					AcknowledgeCommands (frameIndexToAcknowledge, connectionId);
+					AcknowledgeData (frameIndexToAcknowledge, connectionId);
 					break;
-				case MessageType.EmptyCommands:
+				case MessageType.Empty:
 					// We have received no commands for this frame. Just acknowledge.
+					// TODO: Interpret an empty frame as unchanged input
 					// Read the frame index we are acknowledging.
 					var frameIndexOfEmpty = binaryReader.ReadInt32 ();
 					// Acknowledging...
-					AcknowledgeCommands (frameIndexOfEmpty, connectionId);
+					AcknowledgeData (frameIndexOfEmpty, connectionId);
 					break;
 				case MessageType.State:
-					// TODO: Load in the entire game state
+					// First, mark this peer as having state since I received
+					// state from this peer
+					peerId = GetPeer (connectionId).Id.GetValueOrDefault ();
+					GetPeer (connectionId).HasState = true;
+					// Load in the entire game state
 					// First value is the frame of this state
 					var stateFrameIndex = binaryReader.ReadInt32 ();
 					// Are we receiving a null state?
@@ -246,26 +254,19 @@ namespace HiddenSwitch.Multiplayer
 						m_stateStartFrame = stateFrameIndex;
 					}
 
+					// I may have possibly updated my state, and I received state from a peer.
+					// Check if all the peers have state at this point.
+					CheckAllHaveState ();
+
 					// Acknowledge receipt of the state
 					AcknowledgeState (connectionId);
 
 					break;
 				case MessageType.AcknowledgeState:
 					// Mark the peer as having received the state.
-					m_peers [connectionId].HasState = true;
+					GetPeer (connectionId).HasState = true;
 					// If all the peers have the latest state, we can start the execution timer
-					var allHaveState = true;
-					foreach (var peer in m_peers) {
-						if (!peer.Value.HasState) {
-							allHaveState = false;
-							break;
-						}
-					}
-
-					if (allHaveState) {
-						AllHaveState = true;
-						// TODO: Set the game as ready to start executing
-					}
+					CheckAllHaveState ();
 					break;
 				case MessageType.PeerInfo:
 					// Read in the peer information. This allows people to reconnect after being disconnected
@@ -288,7 +289,6 @@ namespace HiddenSwitch.Multiplayer
 						}
 					} else {
 						m_peers [connectionId] = new Peer (connectionId);
-						m_unacknowledgedCommandQueue.Add (peerId, new Queue<UnacknowledgedCommands> (30 * 16));
 					}
 
 					m_peers [connectionId].Id = peerId;
@@ -297,6 +297,8 @@ namespace HiddenSwitch.Multiplayer
 					SendState (connectionId);
 					break;
 				}
+
+				binaryReader.Close ();
 				break;
 			case NetworkEventType.DisconnectEvent:
 				// TODO: Mark peer as disconnected
@@ -326,134 +328,138 @@ namespace HiddenSwitch.Multiplayer
 		}
 
 		/// <summary>
-		/// Queues a command to send over the network at the appropriate time.
-		/// 
-		/// It is the responsibility of the caller to not let the game queue commands wildly out into the future.
+		/// Queue an input for the current frame. Assumes teh input belongs to this peer ID.
 		/// </summary>
-		/// <param name="commandId">Command identifier.</param>
-		/// <param name="arguments">Arguments.</param>
-		/// <param name="frameIndex">Frame index. Defaults to the tickrate clock's frameIndex</param>
-		/// <exception cref="HiddenSwitch.Networking.LateCommandException">Thrown if you are trying to queue a command for a frame that
-		/// is not the latest unacknowledged frame for a given peer.</exception>
-		public void QueueCommand (byte commandId, CommandArguments arguments, int frameIndex = int.MinValue)
+		/// <param name="input">Input.</param>
+		/// <param name="frameIndex">Frame index.</param>
+		public void QueueInput (Input input, int frameIndex = int.MinValue)
 		{
+			// If we didn't proide a frame index, we are going to assume this
+			// is data for the frame after the latest acknowledged frame
 			if (frameIndex == int.MinValue) {
-				frameIndex = ElapsedFrameCount;
+				frameIndex = LatestAcknowledgedFrame + 1;
 			}
+
 			// If this command is coming late, throw an exception
 			if (frameIndex < ElapsedFrameCount) {
-				throw new LateCommandException () {
-					CommandId = commandId,
-					Arguments = arguments,
+				throw new LateDataException () {
+					Input = input,
 					FrameIndex = frameIndex
 				};
 			}
 
-			// Queue commands for the other peers
-			var command = new CommandWithArguments () {
-				arguments = arguments,
-				commandId = commandId
-			};
-
-			foreach (var peer in m_peers) {
-				if (!peer.Value.Id.HasValue) {
-					// TODO: Handle peers which aren't connected yet.
-					continue;
-				}
-				var peerId = peer.Value.Id.GetValueOrDefault ();
+			foreach (var peerRecord in m_peers) {
+				var peer = peerRecord.Value;
+				var peerId = peerRecord.Value.Id.GetValueOrDefault ();
+				var data = peer.UnacknowledgedData;
 				// Should we enqueue on this frame? First check if there is anything in the queue
-				if (m_unacknowledgedCommandQueue [peerId].Count > 0) {
+				if (data.Count > 0) {
 					// Look at the latest item on the queue
-					var latestQueue = m_unacknowledgedCommandQueue [peerId].Peek ();
+					var latestQueue = peer.LastUnacknoledgedData;
 					// If we are queuing the current frame still, make sure this command gets serialized into this frame's commands list
 					if (latestQueue.frameIndex == frameIndex) {
-						latestQueue.queuedCommands.Add (command);
+						latestQueue.input = input;
 						// We have enqueued the command in the appropriate place, we can move onto the next peer
 						continue;
 					} else if (latestQueue.frameIndex > frameIndex) {
-						
+						// Too old, error condition
+						throw new LateDataException () {
+							Input = input,
+							FrameIndex = frameIndex
+						};
 					}
 					// Otherwise, we're queueing something newer, so we will just stick it on the queue.
 				}
-
-				m_unacknowledgedCommandQueue [peerId].Enqueue (new UnacknowledgedCommands () { 
+				var latestData = new UnacknowledgedData () { 
 					frameIndex = frameIndex,
-					queuedCommands = new List<CommandWithArguments> (new CommandWithArguments[] { command })
-				});
+					input = input
+				};
+				data.Enqueue (latestData);
+
+				peer.LastUnacknoledgedData = latestData;
 			}
-			// The commands themselves get sent in network clock tick's event
+		}
+
+		internal Peer GetPeer (ConnectionId connectionId)
+		{
+			if (!m_peers.ContainsKey (connectionId)) {
+				m_peers [connectionId] = new Peer (connectionId);
+			}
+
+			return m_peers [connectionId];
 		}
 
 		/// <summary>
-		/// Sends all the hereto unacknowledged commands to the given peer ID. Or, if there are no
+		/// Check whether or not all the peers have received state. If they have,
+		/// this method raises the proper events.
+		/// </summary>
+		protected void CheckAllHaveState ()
+		{
+			var allHaveState = true;
+			foreach (var peer in m_peers) {
+				if (!peer.Value.HasState) {
+					allHaveState = false;
+					break;
+				}
+			}
+
+			if (m_latestState == null) {
+				allHaveState = false;
+			}
+
+			if (allHaveState) {
+				AllHaveState = true;
+			}
+		}
+
+		/// <summary>
+		/// Sends all the hereto unacknowledged commands and input to the given peer ID. Or, if there are no
 		/// unacknowledged commands or just an empty command list, send the empty message.
 		/// </summary>
-		/// <param name="peerId">Peer identifier.</param>
-		internal void SendCommands (PeerId peerId)
+		/// <param name="connectionId">Connection ID</param>
+		internal void SendData (ConnectionId connectionId)
 		{
 			// TODO: When we're sending commands to multiple peers, cache this work
 			var memoryStream = new MemoryStream (m_sendCommandBuffer);
 			var binaryWriter = new BinaryWriter (memoryStream);
-
-			// Send the packet
-			// Find the connectionId for this peer
-			var connectionId = 0;
-			foreach (var peer in m_peers) {
-				if (peer.Value.Id == peerId) {
-					connectionId = peer.Key;
-				}
-			}
-
 			byte sendError;
 
 			// If there are no unacknowledged frames
-			var unacknowledgedQueuedCommands = m_unacknowledgedCommandQueue [peerId];
+			var peer = GetPeer (connectionId);
+			var unacknowledgedQueuedData = peer.UnacknowledgedData;
 
 			// If there are no unacknowledged commands, send empty commands with the tickrate clock's frame index
-			if (unacknowledgedQueuedCommands.Count == 0) {
-				binaryWriter.Write (MessageType.EmptyCommands);
-				binaryWriter.Write (Clock.ElapsedFrameCount);
+			if (unacknowledgedQueuedData.Count == 0) {
+				// An empty message should be interpreted as the input is UNCHANGED
+				binaryWriter.Write (MessageType.Empty);
+				binaryWriter.Write (Clock.ElapsedFrameCount - 1);
 				Transport.Send (connectionId, Transport.UnreliableChannelId, m_sendCommandBuffer, 0, (int)binaryWriter.BaseStream.Position, out sendError);
 				return;
 			}
 
-			binaryWriter.Write (MessageType.Commands);
+			binaryWriter.Write (MessageType.Input);
 
-			foreach (var queuedCommands in unacknowledgedQueuedCommands) {
-				// Write the frame index
-				binaryWriter.Write (queuedCommands.frameIndex);
-				// Write the number of commands
-				var commandCount = queuedCommands.queuedCommands.Count;
-				binaryWriter.Write ((byte)commandCount);
-
-				// If this is an empty frame, continue
-				if (commandCount == 0) {
+			// Let's deal with inputs first.
+			// Write the frame of the latest input
+			binaryWriter.Write (peer.LastUnacknoledgedData.frameIndex);
+			binaryWriter.Write ((byte)unacknowledgedQueuedData.Count);
+			Input previousInput = null;
+			foreach (var data in unacknowledgedQueuedData) {
+				if (previousInput == null) {
+					// If this is the first input, serialize it directly
+					previousInput = data.input;
+					previousInput.Serialize (binaryWriter);
+					// Later we will use this to compute a diff
 					continue;
 				}
 
-				// Write the command IDs
-				var commandIds = new byte[commandCount];
-				for (var i = 0; i < commandCount; i++) {
-					commandIds [i] = queuedCommands.queuedCommands [i].commandId;
+				// Does the current input differ from the previous input?
+				var isDifferentFromPreviousInput = previousInput.Equals (data.input);
+				// If it does differ, we're going to mark as such and serialize the input
+				binaryWriter.Write (isDifferentFromPreviousInput);
+				if (isDifferentFromPreviousInput) {
+					data.input.Serialize (binaryWriter);
 				}
-				binaryWriter.Write (commandIds);
-				// We're going to save the position, serialize, and then restore the position and write
-				// the length of the command list later
-				var commandListLengthPosition = binaryWriter.BaseStream.Position;
-				binaryWriter.Write ((ushort)0);
-				// Write the commands
-				foreach (var queuedCommand in queuedCommands.queuedCommands) {
-					binaryWriter.Write (queuedCommand.commandId);
-					queuedCommand.arguments.Serialize (binaryWriter);
-				}
-				// Compute the length of the command list
-				var lastPosition = binaryWriter.BaseStream.Position;
-				var commandListLength = lastPosition - commandListLengthPosition;
-				binaryWriter.Seek ((int)commandListLengthPosition, SeekOrigin.Begin);
-				// Write the number of bytes in this command list
-				binaryWriter.Write ((ushort)commandListLength);
-				// Seek back to the end of this buffer
-				binaryWriter.Seek ((int)lastPosition, SeekOrigin.Begin);
 			}
 
 			Transport.Send (connectionId, Transport.UnreliableChannelId, m_sendCommandBuffer, 0, (int)binaryWriter.BaseStream.Position, out sendError);
@@ -486,12 +492,12 @@ namespace HiddenSwitch.Multiplayer
 		/// </summary>
 		/// <param name="frameIndex">Frame index.</param>
 		/// <param name="connectionId">Connection identifier.</param>
-		protected void AcknowledgeCommands (int frameIndex, int connectionId)
+		protected void AcknowledgeData (int frameIndex, int connectionId)
 		{
 			// A five byte buffer. The first byte is the message type of acknowledge, the next
 			// four bytes are the frame index we are acknowledging.
 			var acknowledgeBuffer = new byte[5];
-			acknowledgeBuffer [0] = MessageType.AcknowledgeCommands;
+			acknowledgeBuffer [0] = MessageType.AcknowledgeInput;
 			var frameIndexBytes = BitConverter.GetBytes (frameIndex);
 			frameIndexBytes.CopyTo (acknowledgeBuffer, 1);
 			byte acknowledgeError;
@@ -511,14 +517,15 @@ namespace HiddenSwitch.Multiplayer
 		}
 
 		/// <summary>
-		/// When the network clock ticks, try to send commands.
+		/// When the network clock ticks, try to send commands. This tick happens late, so that input generally
+		/// has arrived by the time the data is sent.
 		/// </summary>
 		/// <param name="frameIndex">Frame index.</param>
-		protected void OnNetworkClockTick (int frameIndex)
+		protected void OnNetworkClockLateTick (int elapsedFrames)
 		{
 			// Send my commands to all my peers
 			foreach (var peer in m_peers) {
-				SendCommands (peer.Key);
+				SendData (peer.Key);
 			}
 		}
 
@@ -528,7 +535,12 @@ namespace HiddenSwitch.Multiplayer
 		/// frame, set <see cref="HiddenSwitch.Network`1.TickAllAcknowledgedFrames"/> to true if you would like a tick
 		/// for all the intermediate frames.
 		/// </summary>
-		public event Action<int> Tick;
+		public event Action<int> DidAcknowledgeFrame;
+
+		/// <summary>
+		/// Raised when a frame is received from a peer. The first argument is the frame number.
+		/// </summary>
+		public event Action<int> DidReceiveFrame;
 
 		/// <summary>
 		/// The latest acknowledged frame from the other peers.
@@ -558,11 +570,22 @@ namespace HiddenSwitch.Multiplayer
 			get {
 				return StateStartFrame;
 			}
+			set {
+				StateStartFrame = value;
+			}
 		}
 
+
+		/// <summary>
+		/// Gets or sets the frame that the state started at
+		/// </summary>
+		/// <value>The state start frame.</value>
 		public int StateStartFrame {
 			get {
 				return m_stateStartFrame;
+			}
+			set {
+				m_stateStartFrame = value;
 			}
 		}
 
@@ -587,10 +610,44 @@ namespace HiddenSwitch.Multiplayer
 
 				m_allHaveState = value;
 
-				if (StateSynchronized != null) {
+				if (StateSynchronized != null
+				    && m_allHaveState) {
 					StateSynchronized ();
 				}
 			}
 		}
+
+		/// <summary>
+		/// Gets a simulation frame data structure for the given frame
+		/// </summary>
+		/// <returns>The simulation frame.</returns>
+		/// <param name="forFrame">For frame.</param>
+		public SimulationFrame GetSimulationFrame (FrameIndex forFrame, bool removePreviousFrames = true)
+		{
+			var simulationFrame = new SimulationFrame ();
+			simulationFrame.FrameIndex = forFrame;
+			simulationFrame.Inputs = new Dictionary<int, Input> ();
+			var frame = m_frames [forFrame];
+			foreach (var data in frame.data) {
+				simulationFrame.Inputs [data.Key] = data.Value.input;
+			}
+			if (removePreviousFrames) {
+				var i = -1;
+				while (m_frames.ContainsKey (forFrame + i)) {
+					m_frames.Remove (forFrame + i);
+					i--;
+				}
+			}
+			return simulationFrame;
+		}
 	}
+
+	public class Network<TState> : Network<TState, Input>
+		where TState : State, new()
+	{
+		public Network (IClock clock, PeerId? peerId = null, ITransport transport = null, TState startState = null) : base (clock, peerId, transport, startState)
+		{
+		}
+	}
+
 }

@@ -16,6 +16,7 @@ namespace HiddenSwitch.Multiplayer
 		public int StartFrame { get; set; }
 
 		public event Action<int> Tick;
+		public event Action<int> LateTick;
 
 		protected int m_elapsedFrameCount;
 
@@ -25,10 +26,13 @@ namespace HiddenSwitch.Multiplayer
 			}
 			set {
 				if (m_elapsedFrameCount != value) {
+					m_elapsedFrameCount = value;
 					if (Tick != null) {
 						Tick (m_elapsedFrameCount + StartFrame);
 					}
-					m_elapsedFrameCount = value;
+					if (LateTick != null) {
+						LateTick (m_elapsedFrameCount + StartFrame);
+					}
 				}
 			}
 		}

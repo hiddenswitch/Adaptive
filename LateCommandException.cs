@@ -11,9 +11,14 @@ using FrameIndex = System.Int32;
 namespace HiddenSwitch.Multiplayer
 {
 
-	public class LateCommandException : System.Exception {
-		public int FrameIndex {get; set;}
-		public byte CommandId {get; set;}
-		public CommandArguments Arguments {get; set;}
+	public class LateDataException : System.Exception
+	{
+		public int FrameIndex { get; set; }
+
+		public byte CommandId { get; set; }
+
+		public Input Input { get; set; }
+
+		public CommandArguments Arguments { get; set; }
 	}
 }
