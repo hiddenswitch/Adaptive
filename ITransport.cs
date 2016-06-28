@@ -21,7 +21,7 @@ namespace HiddenSwitch.Multiplayer
 
 		int Port { get; }
 
-		ConnectionId Connect (string hostname, int port);
+		void Connect (string hostname, int port);
 
 		event TransportReceiveHandler Received;
 	}

@@ -92,7 +92,7 @@ namespace HiddenSwitch.Multiplayer.Tests
 			}
 		}
 
-		public int Connect (string hostname, int port)
+		public void Connect (string hostname, int port)
 		{
 			ReliableChannelId = 100;
 			UnreliableChannelId = -200;
@@ -101,7 +101,6 @@ namespace HiddenSwitch.Multiplayer.Tests
 			byte error;
 			Connections.Add (otherTransport.ThisConnectionId);
 			RaiseReceived (otherTransport.ThisConnectionId, ReliableChannelId, UnityEngine.Networking.NetworkEventType.ConnectEvent, new byte[] { }, 0, 0, out error);
-			return transportsByHostname [hostname].ThisConnectionId;
 		}
 
 		public int ReliableChannelId {

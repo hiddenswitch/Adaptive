@@ -61,12 +61,11 @@ namespace HiddenSwitch.Multiplayer
 			LastError = error;
 		}
 
-		public ConnectionId Connect (string hostName, int port = -1)
+		public void Connect (string hostName, int port = -1)
 		{
 			byte error;
-			var connectionId = NetworkTransport.Connect (m_HostId, hostName, port == -1 ? Port : port, 0, out error);
+			NetworkTransport.Connect (m_HostId, hostName, port == -1 ? Port : port, 0, out error);
 			LastError = error;
-			return connectionId;
 		}
 
 		void INetworkReceiverHelper.Receive (int recHostId, int connectionId, int channelId, byte[] recBuffer, int bufferSize, int dataSize, byte error, NetworkEventType recData)
