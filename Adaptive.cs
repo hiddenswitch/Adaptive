@@ -68,12 +68,10 @@ namespace HiddenSwitch.Multiplayer
 
 		void OnReceivedFrameFromNetwork (int frameIndex)
 		{
-//			Debug.Log (string.Format ("netreceived frame {0}", frameIndex));
 			// If I have already processed this frame, skip it
 			if (frameIndex <= m_greatestFrameFromNetwork) {
 				return;
 			}
-//			Debug.LogWarning (string.Format ("netreceived processed {0}", frameIndex));
 
 			var simulationFrame = Network.GetSimulationFrame (frameIndex);
 			Simulation.SetOrExtendFrame (frameIndex, simulationFrame);
