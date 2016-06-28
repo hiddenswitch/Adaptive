@@ -19,6 +19,12 @@ namespace HiddenSwitch.Multiplayer
 	{
 		protected System.Random m_random = new System.Random ();
 
+		public int Port {
+			get {
+				return Transport.Port;
+			}
+		}
+
 		/// <summary>
 		/// Get a public hostname that can be used to connect to this peer.
 		/// If you are using a relay service, this still returns a valid connectable peer.
@@ -30,7 +36,9 @@ namespace HiddenSwitch.Multiplayer
 			}
 		}
 
-		protected bool m_allHaveState;
+		public bool Logging = false;
+
+		protected bool m_allHaveStateAndPeerInfo;
 
 
 		protected int m_myPeerId;
@@ -104,13 +112,13 @@ namespace HiddenSwitch.Multiplayer
 		/// </summary>
 		protected byte[] m_sendStateBuffer = new byte[32 * 1024];
 
-		public Network (IClock clock, PeerId? peerId = null, ITransport transport = null, TState startState = null)
+		public Network (IClock clock, PeerId? peerId = null, ITransport transport = null, TState startState = null, int port = 12500)
 		{
 			// Setup a peer ID for myself. Just a random value for now
 			m_myPeerId = peerId.HasValue ? peerId.GetValueOrDefault () : m_random.Next ();
 
 			// Configure a transport if one isn't specified
-			Transport = transport ?? new UnityNetworkingTransport ();
+			Transport = transport ?? new UnityNetworkingTransport (port: port);
 
 			Transport.Received += HandleTransportReceive;
 			m_latestState = startState;
@@ -129,6 +137,8 @@ namespace HiddenSwitch.Multiplayer
 		/// <param name="error">Error.</param>
 		void HandleTransportReceive (int connectionId, int channelId, NetworkEventType eventType, byte[] buffer, int startIndex, int length, byte error)
 		{
+			Log (string.Format ("cid {0} et {1} len {2} buf0 {3}", connectionId, Enum.GetName (typeof(NetworkEventType), eventType), length, 
+				length > 0 ? Enum.GetName (typeof(MessageEnum), buffer [0]) : ""));
 			switch (eventType) {
 			case NetworkEventType.Nothing:
 				break;
@@ -196,6 +206,9 @@ namespace HiddenSwitch.Multiplayer
 							m_frames [frameIndex].frameIndex = frameIndex;
 							m_frames [frameIndex].data [peerId] = new PeerFrameData ();
 						}
+						if (!m_frames [frameIndex].data.ContainsKey (peerId)) {
+							m_frames [frameIndex].data [peerId] = new PeerFrameData ();
+						}
 						var frameData = m_frames [frameIndex].data [peerId];
 						if (frameIndex == startFrameIndex) {
 							// Always deserialize the first input
@@ -256,7 +269,7 @@ namespace HiddenSwitch.Multiplayer
 
 					// I may have possibly updated my state, and I received state from a peer.
 					// Check if all the peers have state at this point.
-					CheckAllHaveState ();
+					CheckAllHaveStateAndPeerInfo ();
 
 					// Acknowledge receipt of the state
 					AcknowledgeState (connectionId);
@@ -266,7 +279,7 @@ namespace HiddenSwitch.Multiplayer
 					// Mark the peer as having received the state.
 					GetPeer (connectionId).HasState = true;
 					// If all the peers have the latest state, we can start the execution timer
-					CheckAllHaveState ();
+					CheckAllHaveStateAndPeerInfo ();
 					break;
 				case MessageType.PeerInfo:
 					// Read in the peer information. This allows people to reconnect after being disconnected
@@ -274,10 +287,14 @@ namespace HiddenSwitch.Multiplayer
 					peerId = binaryReader.ReadInt32 ();
 					// Do we have an existing entry in our peers table?
 					ConnectionId? existingConnectionId = null;
-					foreach (var kv in m_peers) {
-						if (kv.Value.Id == peerId) {
-							existingConnectionId = kv.Key;
-							break;
+					if (m_peers.ContainsKey (connectionId)) {
+						existingConnectionId = connectionId;
+					} else {
+						foreach (var kv in m_peers) {
+							if (kv.Value.Id == peerId) {
+								existingConnectionId = kv.Key;
+								break;
+							}
 						}
 					}
 					// Migrate all the prior information we have about this peer to the new peer data if
@@ -315,16 +332,8 @@ namespace HiddenSwitch.Multiplayer
 		/// <param name="port">Port.</param>
 		public Peer AddPeer (string hostName, int port)
 		{
-			var connectionId = Transport.Connect (hostName);
-			if (m_peers.ContainsKey (connectionId)) {
-				return m_peers [connectionId];
-			}
-
-			// TODO: Handle error
-			var peer = new Peer (connectionId);
-			// Prepare a peer record
-			m_peers.Add (connectionId, peer);
-			return peer;
+			Transport.Connect (hostName, port);
+			return null;
 		}
 
 		/// <summary>
@@ -393,7 +402,7 @@ namespace HiddenSwitch.Multiplayer
 		/// Check whether or not all the peers have received state. If they have,
 		/// this method raises the proper events.
 		/// </summary>
-		protected void CheckAllHaveState ()
+		protected void CheckAllHaveStateAndPeerInfo ()
 		{
 			var allHaveState = true;
 			foreach (var peer in m_peers) {
@@ -407,8 +416,19 @@ namespace HiddenSwitch.Multiplayer
 				allHaveState = false;
 			}
 
-			if (allHaveState) {
-				AllHaveState = true;
+			var allHavePeerId = true;
+			foreach (var peer in m_peers) {
+				if (!peer.Value.HasPeerInfo) {
+					allHavePeerId = false;
+				}
+			}
+
+			if (m_peers.Count == 0) {
+				allHavePeerId = false;
+			}
+
+			if (allHaveState && allHavePeerId) {
+				AllHaveStateAndPeerInfo = true;
 			}
 		}
 
@@ -454,7 +474,7 @@ namespace HiddenSwitch.Multiplayer
 				}
 
 				// Does the current input differ from the previous input?
-				var isDifferentFromPreviousInput = previousInput.Equals (data.input);
+				var isDifferentFromPreviousInput = ((TInput)previousInput).Equals (data.input);
 				// If it does differ, we're going to mark as such and serialize the input
 				binaryWriter.Write (isDifferentFromPreviousInput);
 				if (isDifferentFromPreviousInput) {
@@ -593,26 +613,26 @@ namespace HiddenSwitch.Multiplayer
 		/// <summary>
 		/// Raised when all the peers have the current state.
 		/// </summary>
-		public event Action StateSynchronized;
+		public event Action Ready;
 
 		/// <summary>
 		/// Do all the peers have valid state?
 		/// </summary>
 		/// <value><c>true</c> if all have state; otherwise, <c>false</c>.</value>
-		public bool AllHaveState {
+		public bool AllHaveStateAndPeerInfo {
 			get {
-				return m_allHaveState;
+				return m_allHaveStateAndPeerInfo;
 			}
 			protected set {
-				if (m_allHaveState == value) {
+				if (m_allHaveStateAndPeerInfo == value) {
 					return;
 				}
 
-				m_allHaveState = value;
+				m_allHaveStateAndPeerInfo = value;
 
-				if (StateSynchronized != null
-				    && m_allHaveState) {
-					StateSynchronized ();
+				if (Ready != null
+				    && m_allHaveStateAndPeerInfo) {
+					Ready ();
 				}
 			}
 		}
@@ -639,6 +659,17 @@ namespace HiddenSwitch.Multiplayer
 				}
 			}
 			return simulationFrame;
+		}
+
+		void Log (string message)
+		{
+			if (Logging) {
+				try {
+					UnityEngine.Debug.Log (message);
+				} catch (System.MissingMethodException e) {
+					System.Console.WriteLine (message);
+				}
+			}
 		}
 	}
 

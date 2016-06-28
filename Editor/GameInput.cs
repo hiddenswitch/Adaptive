@@ -25,7 +25,7 @@ namespace HiddenSwitch.Multiplayer.Tests
 
 		public override bool Equals (object obj)
 		{
-			return direction.Equals (((GameInput)obj).direction);
+			return direction == ((GameInput)obj).direction;
 		}
 
 		public override int GetHashCode (Input obj)

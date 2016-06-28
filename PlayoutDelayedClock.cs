@@ -103,7 +103,7 @@ namespace HiddenSwitch.Multiplayer
 		{
 			PlayoutDelayFrameCount = playoutDelayFrameCount;
 			FirstFrameIndex = firstFrameIndex;
-			timeClock = timeClock ?? new TimeClock (autostart: true, framesPerSecond: simulationRate);
+			timeClock = timeClock ?? new TimeClock (autostart: true, framesPerSecond: simulationRate, endOfFrame: simulationRate == 60);
 			// Make sure the timeclock is started
 			timeClock.Running = true;
 			m_bufferState = BufferState.Buffering;
@@ -125,6 +125,7 @@ namespace HiddenSwitch.Multiplayer
 		/// <param name="elapsedFrames">The number of frames that were elapsed</param>
 		public void IncrementReadyForFrame (FrameIndex frameIndex)
 		{
+//			Debug.Log (string.Format ("incrementing {0}", frameIndex));
 			// TODO: Analyze the rate that we receive ready frames. Then, adjust the simulation rate appropriately.
 //			var frameIndex = elapsedFrames - 1;
 			// Is this the first time we're seeing this frame?

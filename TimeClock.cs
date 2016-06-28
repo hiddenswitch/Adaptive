@@ -45,6 +45,7 @@ namespace HiddenSwitch.Multiplayer
 			StartFrame = startFrame;
 			var timer = new GameObject ("Timer Helper");
 			m_timeClockHelper = timer.AddComponent<TimeClockHelper> ();
+			m_timeClockHelper.timeClock = this;
 			m_timeClockHelper.framesPerSecond = framesPerSecond;
 			m_timeClockHelper.endOfFrame = endOfFrame;
 

@@ -55,7 +55,9 @@ namespace HiddenSwitch.Multiplayer
 					ElapsedTicks = (long)((currentTime - m_lastTime) * 10e10);
 					m_lastTime = currentTime;
 
-					timeClock.HelperTick ();
+					if (timeClock != null) {
+						timeClock.HelperTick ();
+					}
 				}
 				while (!running) {
 					yield return null;

@@ -19,7 +19,9 @@ namespace HiddenSwitch.Multiplayer
 
 		int UnreliableChannelId { get; }
 
-		ConnectionId Connect (string hostname);
+		int Port { get; }
+
+		ConnectionId Connect (string hostname, int port);
 
 		event TransportReceiveHandler Received;
 	}

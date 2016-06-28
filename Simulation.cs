@@ -10,7 +10,7 @@ using FrameIndex = System.Int32;
 
 namespace HiddenSwitch.Multiplayer
 {
-	public delegate void SimulationInputHandler<TState, TInput> (TState mutableState, PeerId peerId, TInput input, FrameIndex frameIndex)
+	public delegate void SimulationInputHandler<TState, TInput> (TState mutableState, KeyValuePair<PeerId, TInput>[] inputs, FrameIndex frameIndex)
 		where TState : State, new()
 		where TInput : Input, new();
 	
@@ -112,9 +112,15 @@ namespace HiddenSwitch.Multiplayer
 
 			// Execute inputs
 			if (InputHandler != null) {
-				foreach (var inputWithPeer in frame.Inputs) {
-					InputHandler (nextState, inputWithPeer.Key, (TInput)inputWithPeer.Value, frameIndex);
+				var inputs = new KeyValuePair<PeerId, TInput>[frame.Inputs.Count];
+				// Copy with casting
+				var uncastedInputs = new KeyValuePair<PeerId, Input>[frame.Inputs.Count];
+				frame.Inputs.CopyTo (uncastedInputs, 0);
+				for (var i = 0; i < uncastedInputs.Length; i++) {
+					var kv = uncastedInputs [i];
+					inputs [i] = new KeyValuePair<int, TInput> (kv.Key, (TInput)kv.Value);
 				}
+				InputHandler (nextState, inputs, frameIndex);
 			} else {
 				throw new InvalidOperationException ("No InputHandler was specified on this simulation.");
 			}

@@ -40,4 +40,14 @@ namespace HiddenSwitch.Multiplayer
 		/// </summary>
 		internal const byte AcknowledgeState = 6;
 	}
+
+	internal enum MessageEnum : byte
+	{
+		AcknowledgeInput = 1,
+		State = 2,
+		Input = 3,
+		Empty = 4,
+		PeerInfo = 5,
+		AcknowledgeState = 6
+	}
 }

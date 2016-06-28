@@ -48,11 +48,11 @@ namespace HiddenSwitch.Multiplayer.Tests
 			var network = new Network<GameStateWithInputs, GameInput> (inputClock, transport: new TestTransport (hostname), peerId: peerId);
 
 			var adaptive = new Adaptive<GameStateWithInputs, GameInput> (game, simulationDelay: bufferSize, inputClock: inputClock, simulationClock: new TestClock (framesPerSecond: 60, autostart: false, name: string.Format ("H{0} simclock", hostname)), bufferClock: new TestClock (framesPerSecond: 60), network: network);
-			adaptive.Simulation.InputHandler = delegate(GameStateWithInputs mutableState, int id, GameInput input, int frameIndex) {
-				if (Logging) {
-					System.Console.WriteLine ("frame {3} host {0} processing peerId {1} value {2}", hostname, id, input.direction, frameIndex);
+			adaptive.Simulation.InputHandler = delegate(GameStateWithInputs mutableState, System.Collections.Generic.KeyValuePair<int, GameInput>[] inputs, int frameIndex) {
+				foreach (var kv in inputs) {
+					var input = kv.Value;
+					mutableState.Move (input.direction);
 				}
-				mutableState.Move (input.direction);
 			};
 			return adaptive;
 		}

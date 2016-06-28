@@ -22,7 +22,7 @@ namespace HiddenSwitch.Multiplayer
 
 		public byte LastError { get; private set; }
 
-		public UnityNetworkingTransport (int players = 2, int port = 6002)
+		public UnityNetworkingTransport (int players = 2, int port = 12500)
 		{
 			Port = port;
 
@@ -61,10 +61,10 @@ namespace HiddenSwitch.Multiplayer
 			LastError = error;
 		}
 
-		public ConnectionId Connect (string hostName)
+		public ConnectionId Connect (string hostName, int port = -1)
 		{
 			byte error;
-			var connectionId = NetworkTransport.Connect (m_HostId, hostName, Port, 0, out error);
+			var connectionId = NetworkTransport.Connect (m_HostId, hostName, port == -1 ? Port : port, 0, out error);
 			LastError = error;
 			return connectionId;
 		}

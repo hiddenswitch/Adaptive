@@ -16,6 +16,13 @@ namespace HiddenSwitch.Multiplayer.Tests
 		public static System.Random random = new System.Random ();
 		public List<int> Connections = new List<int> ();
 		public bool Logging = false;
+		protected bool m_FailNextSend = false;
+
+		public int Port {
+			get {
+				return 2;
+			}
+		}
 
 		public TestTransport (string hostname)
 		{
@@ -28,6 +35,11 @@ namespace HiddenSwitch.Multiplayer.Tests
 		#region ITransport implementation
 
 		public event TransportReceiveHandler Received;
+
+		public void FailNextSend ()
+		{
+			m_FailNextSend = true;
+		}
 
 		public void Send (int destinationId, int channelId, byte[] buffer, int startIndex, int length, out byte error)
 		{
@@ -53,6 +65,12 @@ namespace HiddenSwitch.Multiplayer.Tests
 				throw new Exception ();
 			}
 
+			if (m_FailNextSend) {
+				error = 0;
+				m_FailNextSend = false;
+				return;
+			}
+
 			var otherTransport = transports [destinationId];
 			if (!otherTransport.Connections.Contains (ThisConnectionId)) {
 				otherTransport.ReliableChannelId = 100;
@@ -74,7 +92,7 @@ namespace HiddenSwitch.Multiplayer.Tests
 			}
 		}
 
-		public int Connect (string hostname)
+		public int Connect (string hostname, int port)
 		{
 			ReliableChannelId = 100;
 			UnreliableChannelId = -200;

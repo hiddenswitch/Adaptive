@@ -35,37 +35,51 @@ namespace HiddenSwitch.Multiplayer
 
 		protected TimeClock m_BufferClock;
 
-		public Adaptive (IAdaptiveDelegate<TState, TInput> gameManager, 
+		protected bool m_started;
+
+		public Adaptive (IAdaptiveDelegate<TState, TInput> gameManager = null, 
 		                 int simulationDelay = 4,
 		                 int maxPeerDelay = 16,
 		                 TimeClock inputClock = null, 
 		                 TimeClock simulationClock = null,
 		                 TimeClock bufferClock = null,
-		                 Network<TState, TInput> network = null)
+		                 Network<TState, TInput> network = null,
+		                 int framesPerSecond = 60,
+		                 int port = 12500)
 		{
-			m_BufferClock = bufferClock ?? new TimeClock (framesPerSecond: 60, autostart: true, endOfFrame: true);
+			m_BufferClock = bufferClock ?? new TimeClock (framesPerSecond: framesPerSecond, autostart: true, endOfFrame: true);
 			m_BufferClock.Tick += CheckBuffer;
 			PeerDelay = maxPeerDelay;
 			GameManager = gameManager;
-			SimulationClock = new PlayoutDelayedClock (simulationRate: 60, playoutDelayFrameCount: simulationDelay, timeClock: simulationClock);
+			SimulationClock = new PlayoutDelayedClock (simulationRate: framesPerSecond, playoutDelayFrameCount: simulationDelay, timeClock: simulationClock);
 			// Only support two player for now, so support the two peers (myself and the other guy)
 			SimulationClock.PeerCount = 2;
 			Simulation = new Simulation<TState, TInput> (SimulationClock);
-			InputClock = inputClock ?? new TimeClock (framesPerSecond: 60, autostart: false, endOfFrame: true, startFrame: 0);
+			InputClock = inputClock ?? new TimeClock (framesPerSecond: framesPerSecond, autostart: false, endOfFrame: true, startFrame: 0);
 			InputClock.Tick += OnInputClockTick;
-			Network = network ?? new Network<TState, TInput> (clock: InputClock);
+			Network = network ?? new Network<TState, TInput> (clock: InputClock, port: port);
 			Network.TickAllAcknowledgedFrames = true;
 			Network.DidAcknowledgeFrame += OnMyFrameAcknowledged;
-			Network.StateSynchronized += OnStateSynchronized;
+			Network.Ready += OnStateSynchronized;
 			Network.DidReceiveFrame += OnReceivedFrameFromNetwork;
 		}
 
+		protected int m_greatestFrameFromNetwork = -1;
+
 		void OnReceivedFrameFromNetwork (int frameIndex)
 		{
+//			Debug.Log (string.Format ("netreceived frame {0}", frameIndex));
+			// If I have already processed this frame, skip it
+			if (frameIndex <= m_greatestFrameFromNetwork) {
+				return;
+			}
+//			Debug.LogWarning (string.Format ("netreceived processed {0}", frameIndex));
+
 			var simulationFrame = Network.GetSimulationFrame (frameIndex);
 			Simulation.SetOrExtendFrame (frameIndex, simulationFrame);
 			// I have received data from the peer
 			SimulationClock.IncrementReadyForFrame (frameIndex);
+			m_greatestFrameFromNetwork = Mathf.Max (m_greatestFrameFromNetwork, frameIndex);
 		}
 
 		void CheckBuffer (int elapsedSentinelFrames)
@@ -73,7 +87,7 @@ namespace HiddenSwitch.Multiplayer
 			// Did the input clock get too far ahead of the other peers? If so, pause the input. This will have the effect
 			// of pausing the simulation if the network's buffer gets depleted.
 			var isInputTooFarInTheFuture = InputClock.ElapsedFrameCount - PeerDelay > Network.LatestAcknowledgedFrame;
-			InputClock.Running = !isInputTooFarInTheFuture;
+			InputClock.Running = m_started && !isInputTooFarInTheFuture;
 		}
 
 		void OnInputClockTick (int elapsedFrames)
@@ -93,9 +107,12 @@ namespace HiddenSwitch.Multiplayer
 		/// Connects to a host and returns the peer ID
 		/// </summary>
 		/// <param name="hostName">Host name.</param>
-		public Peer Connect (string hostName)
+		public Peer Connect (string hostName, int port = -1)
 		{
-			return Network.AddPeer (hostName, 6002);
+			if (port == -1) {
+				port = this.Network.Port;
+			}
+			return Network.AddPeer (hostName, port);
 		}
 
 		public void Host (TState withState)
@@ -114,6 +131,7 @@ namespace HiddenSwitch.Multiplayer
 			}
 
 			// Start the clocks!
+			m_started = true;
 			InputClock.Start ();
 		}
 

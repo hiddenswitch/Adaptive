@@ -15,8 +15,11 @@ namespace HiddenSwitch.Multiplayer.Tests
 			var manualClock = new ManualClock ();
 			var comparisonState = new GameStateWithInputs ();
 			var simulation = new Simulation<GameStateWithInputs, GameInput> (manualClock, new GameStateWithInputs ());
-			simulation.InputHandler = delegate(GameStateWithInputs mutableState, int peerId, GameInput input, int frameIndex) {
-				mutableState.Move (input.direction);
+			simulation.InputHandler = delegate(GameStateWithInputs mutableState, System.Collections.Generic.KeyValuePair<int, GameInput>[] inputs, int frameIndex) {
+				foreach (var kv in inputs) {
+					var input = kv.Value;
+					mutableState.Move (input.direction);
+				}
 			};
 			var myPeerId = 0;
 			var moves = 20;
@@ -39,8 +42,11 @@ namespace HiddenSwitch.Multiplayer.Tests
 			var manualClock = new ManualClock ();
 			var comparisonState = new GameStateWithInputs ();
 			var simulation = new Simulation<GameStateWithInputs, GameInput> (manualClock, new GameStateWithInputs ());
-			simulation.InputHandler = delegate(GameStateWithInputs mutableState, int peerId, GameInput input, int frameIndex) {
-				mutableState.Move (input.direction);
+			simulation.InputHandler = delegate(GameStateWithInputs mutableState, System.Collections.Generic.KeyValuePair<int, GameInput>[] inputs, int frameIndex) {
+				foreach (var kv in inputs) {
+					var input = kv.Value;
+					mutableState.Move (input.direction);
+				}
 			};
 			var moves = 20;
 			var systemRandom = new System.Random ();
@@ -73,8 +79,11 @@ namespace HiddenSwitch.Multiplayer.Tests
 			var manualClock = new ManualClock ();
 			var comparisonState = new GameStateWithInputs ();
 			var simulation = new Simulation<GameStateWithInputs, GameInput> (manualClock, new GameStateWithInputs ());
-			simulation.InputHandler = delegate(GameStateWithInputs mutableState, int peerId, GameInput input, int frameIndex) {
-				mutableState.Move (input.direction);
+			simulation.InputHandler = delegate(GameStateWithInputs mutableState, System.Collections.Generic.KeyValuePair<int, GameInput>[] inputs, int frameIndex) {
+				foreach (var kv in inputs) {
+					var input = kv.Value;
+					mutableState.Move (input.direction);
+				}
 			};
 			var moves = 20;
 			var systemRandom = new System.Random ();
@@ -103,8 +112,11 @@ namespace HiddenSwitch.Multiplayer.Tests
 			var manualClock = new ManualClock ();
 			var comparisonState = new GameStateWithInputs ();
 			var simulation = new Simulation<GameStateWithInputs, GameInput> (manualClock, new GameStateWithInputs ());
-			simulation.InputHandler = delegate(GameStateWithInputs mutableState, int peerId, GameInput input, int frameIndex) {
-				mutableState.Move (input.direction);
+			simulation.InputHandler = delegate(GameStateWithInputs mutableState, System.Collections.Generic.KeyValuePair<int, GameInput>[] inputs, int frameIndex) {
+				foreach (var kv in inputs) {
+					var input = kv.Value;
+					mutableState.Move (input.direction);
+				}
 			};
 			var myPeerId = 0;
 			var moves = 20;
