@@ -18,7 +18,7 @@ namespace HiddenSwitch.Multiplayer.Tests
 				clock.PeerCount = 1;
 				var frame = 0;
 				for (; frame < 1000; frame++) {
-					clock.IncrementReadyForFrame (frame);
+					clock.SetReadyForFrame (frame, 0);
 					testClock.Timer.ElapseTicks ((long)(10e10 * 1.0 / 60.0));
 				}
 				Assert.AreEqual (frame, 1000);
@@ -35,8 +35,8 @@ namespace HiddenSwitch.Multiplayer.Tests
 				clock.PeerCount = 2;
 				var frame = 0;
 				for (; frame < 1000; frame++) {
-					clock.IncrementReadyForFrame (frame);
-					clock.IncrementReadyForFrame (frame);
+					clock.SetReadyForFrame (frame, 0);
+					clock.SetReadyForFrame (frame, 1);
 					testClock.Timer.ElapseTicks ((long)(10e10 * 1.0 / 60.0));
 				}
 				Assert.AreEqual (frame - i, clock.ElapsedFrameCount);
@@ -52,14 +52,14 @@ namespace HiddenSwitch.Multiplayer.Tests
 				clock.PeerCount = 2;
 				var frame = 0;
 				for (; frame < 1000; frame++) {
-					clock.IncrementReadyForFrame (frame);
+					clock.SetReadyForFrame (frame, 0);
 					testClock.Timer.ElapseTicks ((long)(10e10 * 1.0 / 60.0));
 				}
 
 				Assert.AreEqual (0, clock.ElapsedFrameCount);
 
 				for (frame = 0; frame < 1000; frame++) {
-					clock.IncrementReadyForFrame (frame);
+					clock.SetReadyForFrame (frame, 1);
 					Assert.AreEqual (frame, clock.HighestExecutableFrame);
 					testClock.Timer.ElapseTicks ((long)(10e10 * 1.0 / 60.0));
 				}

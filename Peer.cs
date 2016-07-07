@@ -13,7 +13,7 @@ namespace HiddenSwitch.Multiplayer
 	/// <summary>
 	/// An object that allows you to query information about a peer.
 	/// </summary>
-	public class Peer : IEqualityComparer<Peer>
+	public sealed class Peer : IEqualityComparer<Peer>
 	{
 		public PeerId? Id {
 			get;
@@ -33,14 +33,77 @@ namespace HiddenSwitch.Multiplayer
 
 		public bool HasState { get; set; }
 
-		public UnacknowledgedData LastUnacknoledgedData { get; set; }
+		public bool HasError { get; private set; }
 
-		public Queue<UnacknowledgedData> UnacknowledgedData { get; set; }
+		public int? Max { get; private set; }
+
+		public int? Min { get; private set; }
+
+		public SortedDictionary<int, UnacknowledgedData> UnacknowledgedData { get; private set; }
 
 		internal Peer (int connectionId)
 		{
 			ConnectionId = connectionId;
-			UnacknowledgedData = new Queue<HiddenSwitch.Multiplayer.UnacknowledgedData> (30 * 16);
+			UnacknowledgedData = new SortedDictionary<int, UnacknowledgedData> ();
+		}
+
+		public void AcknowledgeFrameAndOlder (int frameIndex)
+		{
+			if (HasError) {
+				return;
+			}
+
+			if (!Min.HasValue) {
+				return;
+			}
+
+			var min = Min.GetValueOrDefault ();
+
+			for (var i = frameIndex; i >= min; i--) {
+				UnacknowledgedData.Remove (i);
+			}
+
+			Min = frameIndex + 1;
+			CheckMinAndMax ();
+		}
+
+		public void Enqueue (UnacknowledgedData data)
+		{
+			if (Max.HasValue) {
+				Set (data, Max.GetValueOrDefault () + 1);
+			} else {
+				Set (data, 0);				
+			}
+		}
+
+		public void Set (UnacknowledgedData data, int frameIndex)
+		{
+			UnacknowledgedData [frameIndex] = data;
+			if (Max.HasValue) {
+				Max = Math.Max (Max.GetValueOrDefault (), frameIndex);
+			} else {
+				Max = frameIndex;
+			}
+			if (Min.HasValue) {
+				Min = Math.Min (Min.GetValueOrDefault (), frameIndex);
+			} else {
+				Min = frameIndex;
+			}
+
+			CheckMinAndMax ();
+		}
+
+		void CheckMinAndMax ()
+		{
+			if (Max.HasValue
+			    && !UnacknowledgedData.ContainsKey (Max.GetValueOrDefault ())) {
+				Max = null;
+			}
+
+			if (Min.HasValue
+			    && !UnacknowledgedData.ContainsKey (Min.GetValueOrDefault ())) {
+				Min = null;
+			}
 		}
 
 		public override int GetHashCode ()

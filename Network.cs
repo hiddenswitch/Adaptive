@@ -165,16 +165,9 @@ namespace HiddenSwitch.Multiplayer
 				case MessageType.AcknowledgeInput:
 					// Clear out my unacknowledged command lists
 					var peer = GetPeer (connectionId);
-					var acknowledgedFrameIndex = binaryReader.ReadInt32 ();
-					var stack = peer.UnacknowledgedData;
-					while (stack.Count > 0
-					       && stack.Peek ().frameIndex <= acknowledgedFrameIndex) {
-						stack.Dequeue ();
-					}
 
-					if (stack.Count == 0) {
-						peer.LastUnacknoledgedData = null;
-					}
+					var acknowledgedFrameIndex = binaryReader.ReadInt32 ();
+					peer.AcknowledgeFrameAndOlder (acknowledgedFrameIndex);
 
 					var currentLatestAcknowledgedFrame = m_latestAcknowledgedFrame;
 					m_latestAcknowledgedFrame = acknowledgedFrameIndex;
@@ -182,13 +175,16 @@ namespace HiddenSwitch.Multiplayer
 					// Tick, now that our commands have been acknowledged
 					if (TickAllAcknowledgedFrames) {
 						for (var i = currentLatestAcknowledgedFrame + 1; i <= m_latestAcknowledgedFrame; i++) {
-							if (DidAcknowledgeFrame != null) {
-								DidAcknowledgeFrame (i);
+							var hasPeerId = peer.Id != null;
+							if (DidAcknowledgeFrame != null
+							    && hasPeerId) {
+								DidAcknowledgeFrame (i, peer.Id.GetValueOrDefault ());
 							}
 						}
 					} else {
-						if (DidAcknowledgeFrame != null) {
-							DidAcknowledgeFrame (m_latestAcknowledgedFrame);
+						if (DidAcknowledgeFrame != null
+						    && peer.Id != null) {
+							DidAcknowledgeFrame (m_latestAcknowledgedFrame, peer.Id.GetValueOrDefault ());
 						}
 					}
 					break;
@@ -229,7 +225,7 @@ namespace HiddenSwitch.Multiplayer
 					// Always tick all received frames
 					if (DidReceiveFrame != null) {
 						for (var frameIndex = startFrameIndex; frameIndex < inputCount + startFrameIndex; frameIndex++) {
-							DidReceiveFrame (frameIndex);
+							DidReceiveFrame (frameIndex, peerId);
 						}
 					}
 
@@ -337,18 +333,12 @@ namespace HiddenSwitch.Multiplayer
 		}
 
 		/// <summary>
-		/// Queue an input for the current frame. Assumes teh input belongs to this peer ID.
+		/// Queue an input for the current frame. Assumes the input belongs to this peer ID.
 		/// </summary>
 		/// <param name="input">Input.</param>
 		/// <param name="frameIndex">Frame index.</param>
-		public void QueueInput (Input input, int frameIndex = int.MinValue)
+		public void QueueInput (Input input, int frameIndex)
 		{
-			// If we didn't proide a frame index, we are going to assume this
-			// is data for the frame after the latest acknowledged frame
-			if (frameIndex == int.MinValue) {
-				frameIndex = LatestAcknowledgedFrame + 1;
-			}
-
 			// If this command is coming late, throw an exception
 			if (frameIndex < ElapsedFrameCount) {
 				throw new LateDataException () {
@@ -359,33 +349,11 @@ namespace HiddenSwitch.Multiplayer
 
 			foreach (var peerRecord in m_peers) {
 				var peer = peerRecord.Value;
-				var peerId = peerRecord.Value.Id.GetValueOrDefault ();
-				var data = peer.UnacknowledgedData;
-				// Should we enqueue on this frame? First check if there is anything in the queue
-				if (data.Count > 0) {
-					// Look at the latest item on the queue
-					var latestQueue = peer.LastUnacknoledgedData;
-					// If we are queuing the current frame still, make sure this command gets serialized into this frame's commands list
-					if (latestQueue.frameIndex == frameIndex) {
-						latestQueue.input = input;
-						// We have enqueued the command in the appropriate place, we can move onto the next peer
-						continue;
-					} else if (latestQueue.frameIndex > frameIndex) {
-						// Too old, error condition
-						throw new LateDataException () {
-							Input = input,
-							FrameIndex = frameIndex
-						};
-					}
-					// Otherwise, we're queueing something newer, so we will just stick it on the queue.
-				}
 				var latestData = new UnacknowledgedData () { 
-					frameIndex = frameIndex,
 					input = input
 				};
-				data.Enqueue (latestData);
 
-				peer.LastUnacknoledgedData = latestData;
+				peer.Set (latestData, frameIndex);
 			}
 		}
 
@@ -449,7 +417,7 @@ namespace HiddenSwitch.Multiplayer
 			var unacknowledgedQueuedData = peer.UnacknowledgedData;
 
 			// If there are no unacknowledged commands, send empty commands with the tickrate clock's frame index
-			if (unacknowledgedQueuedData.Count == 0) {
+			if (!peer.Max.HasValue) {
 				// An empty message should be interpreted as the input is UNCHANGED
 				binaryWriter.Write (MessageType.Empty);
 				binaryWriter.Write (Clock.ElapsedFrameCount - 1);
@@ -461,10 +429,11 @@ namespace HiddenSwitch.Multiplayer
 
 			// Let's deal with inputs first.
 			// Write the frame of the latest input
-			binaryWriter.Write (peer.LastUnacknoledgedData.frameIndex);
+			binaryWriter.Write (peer.Max.GetValueOrDefault ());
 			binaryWriter.Write ((byte)unacknowledgedQueuedData.Count);
 			Input previousInput = null;
-			foreach (var data in unacknowledgedQueuedData) {
+			foreach (var kv in unacknowledgedQueuedData) {
+				var data = kv.Value;
 				if (previousInput == null) {
 					// If this is the first input, serialize it directly
 					previousInput = data.input;
@@ -555,12 +524,17 @@ namespace HiddenSwitch.Multiplayer
 		/// frame, set <see cref="HiddenSwitch.Network`1.TickAllAcknowledgedFrames"/> to true if you would like a tick
 		/// for all the intermediate frames.
 		/// </summary>
-		public event Action<int> DidAcknowledgeFrame;
+		public event FrameAndPeerHandler DidAcknowledgeFrame;
+
+		/// <summary>
+		/// A handler for when a frame is handled over the network.
+		/// </summary>
+		public delegate void FrameAndPeerHandler (FrameIndex frameIndex, PeerId peerId);
 
 		/// <summary>
 		/// Raised when a frame is received from a peer. The first argument is the frame number.
 		/// </summary>
-		public event Action<int> DidReceiveFrame;
+		public event FrameAndPeerHandler DidReceiveFrame;
 
 		/// <summary>
 		/// The latest acknowledged frame from the other peers.
@@ -645,7 +619,6 @@ namespace HiddenSwitch.Multiplayer
 		public SimulationFrame GetSimulationFrame (FrameIndex forFrame, bool removePreviousFrames = true)
 		{
 			var simulationFrame = new SimulationFrame ();
-			simulationFrame.FrameIndex = forFrame;
 			simulationFrame.Inputs = new Dictionary<int, Input> ();
 			var frame = m_frames [forFrame];
 			foreach (var data in frame.data) {

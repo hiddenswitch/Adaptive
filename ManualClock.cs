@@ -37,9 +37,20 @@ namespace HiddenSwitch.Multiplayer
 			}
 		}
 
+		protected void StepInternal ()
+		{
+			m_elapsedFrameCount++;
+			if (Tick != null) {
+				Tick (m_elapsedFrameCount + StartFrame);
+			}
+			if (LateTick != null) {
+				LateTick (m_elapsedFrameCount + StartFrame);
+			}
+		}
+
 		public void Step ()
 		{
-			ElapsedFrameCount += 1;
+			StepInternal ();
 		}
 	}
 	

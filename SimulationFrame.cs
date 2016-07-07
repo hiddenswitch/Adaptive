@@ -13,9 +13,7 @@ namespace HiddenSwitch.Multiplayer
 
 	public sealed class SimulationFrame
 	{
-		public FrameIndex FrameIndex;
-		public IList<CommandWithArgumentsAndPeer> Commands = new List<CommandWithArgumentsAndPeer> ();
-		public IDictionary<PeerId, Input> Inputs = new Dictionary<PeerId, Input> ();
+		public IDictionary<PeerId, Input> Inputs = new Dictionary<PeerId, Input> (2);
 	}
 
 }

@@ -34,8 +34,9 @@ namespace HiddenSwitch.Multiplayer
 		public bool IsServer { get; protected set; }
 
 		protected TimeClock m_BufferClock;
-
 		protected bool m_started;
+		protected int m_maxElapsedInputFrames = -1;
+
 
 		public Adaptive (IAdaptiveDelegate<TState, TInput> gameManager = null, 
 		                 int simulationDelay = 4,
@@ -48,36 +49,35 @@ namespace HiddenSwitch.Multiplayer
 		                 int port = 12500)
 		{
 			m_BufferClock = bufferClock ?? new TimeClock (framesPerSecond: framesPerSecond, autostart: true, endOfFrame: true);
-			m_BufferClock.Tick += CheckBuffer;
+			m_BufferClock.LateTick += CheckBuffer;
 			PeerDelay = maxPeerDelay;
 			GameManager = gameManager;
+
 			SimulationClock = new PlayoutDelayedClock (simulationRate: framesPerSecond, playoutDelayFrameCount: simulationDelay, timeClock: simulationClock);
+
 			// Only support two player for now, so support the two peers (myself and the other guy)
 			SimulationClock.PeerCount = 2;
 			Simulation = new Simulation<TState, TInput> (SimulationClock);
 			InputClock = inputClock ?? new TimeClock (framesPerSecond: framesPerSecond, autostart: false, endOfFrame: true, startFrame: 0);
 			InputClock.Tick += OnInputClockTick;
+
 			Network = network ?? new Network<TState, TInput> (clock: InputClock, port: port);
 			Network.TickAllAcknowledgedFrames = true;
 			Network.DidAcknowledgeFrame += OnMyFrameAcknowledged;
 			Network.Ready += OnStateSynchronized;
 			Network.DidReceiveFrame += OnReceivedFrameFromNetwork;
+
+
 		}
 
-		protected int m_greatestFrameFromNetwork = -1;
+		//		protected int m_greatestFrameFromNetwork = -1;
 
-		void OnReceivedFrameFromNetwork (int frameIndex)
+		void OnReceivedFrameFromNetwork (int frameIndex, int peerId)
 		{
-			// If I have already processed this frame, skip it
-			if (frameIndex <= m_greatestFrameFromNetwork) {
-				return;
-			}
-
 			var simulationFrame = Network.GetSimulationFrame (frameIndex);
 			Simulation.SetOrExtendFrame (frameIndex, simulationFrame);
 			// I have received data from the peer
-			SimulationClock.IncrementReadyForFrame (frameIndex);
-			m_greatestFrameFromNetwork = Mathf.Max (m_greatestFrameFromNetwork, frameIndex);
+			SimulationClock.SetReadyForFrame (frameIndex, peerId);
 		}
 
 		void CheckBuffer (int elapsedSentinelFrames)
@@ -88,11 +88,20 @@ namespace HiddenSwitch.Multiplayer
 			InputClock.Running = m_started && !isInputTooFarInTheFuture;
 		}
 
+
 		void OnInputClockTick (int elapsedFrames)
 		{
+			if (elapsedFrames <= m_maxElapsedInputFrames) {
+				return;
+			}
+
+			m_maxElapsedInputFrames = System.Math.Max (elapsedFrames, m_maxElapsedInputFrames);
+
 			var frameIndex = elapsedFrames - 1;
 			// Gather the input from the game manager
 			var input = GameManager.GetCurrentInput ();
+
+			// If we have already processed this frame, don't process it again
 
 			// Set my input into the simulation too
 			Simulation.SetInput (input, MyPeerId, frameIndex);
@@ -133,11 +142,12 @@ namespace HiddenSwitch.Multiplayer
 			InputClock.Start ();
 		}
 
-		void OnMyFrameAcknowledged (int frameIndex)
+		void OnMyFrameAcknowledged (int frameIndex, int peerId)
 		{
 			// my peer has acknowledged the frame, so my
 			// input is ready to be processed
-			SimulationClock.IncrementReadyForFrame (frameIndex: frameIndex);
+			// make sure to set all frames prior to this one acknowledged too
+			SimulationClock.SetReadyForFrame (frameIndex, MyPeerId, allPrior: true);
 		}
 	}
 }

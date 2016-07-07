@@ -45,13 +45,27 @@ namespace HiddenSwitch.Multiplayer
 				m_lastTime = currentTime;
 
 				if (timeClock != null) {
-					timeClock.HelperTick ();
+					timeClock.HelperFrameTick ();
 				}
 			} else if (!endOfFrame
 			           && running
 			           && !timerCoroutineRunning) {
 				StartCoroutine (TimerCoroutine ());
 				timerCoroutineRunning = true;
+			}
+		}
+
+		void LateUpdate ()
+		{
+			if (endOfFrame
+			    && running) {
+				var currentTime = Time.time;
+				ElapsedTicks = (long)((currentTime - m_lastTime) * 10e10);
+				m_lastTime = currentTime;
+
+				if (timeClock != null) {
+					timeClock.HelperLateFrameTick ();
+				}
 			}
 		}
 

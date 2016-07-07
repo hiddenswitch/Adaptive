@@ -65,6 +65,21 @@ namespace HiddenSwitch.Multiplayer
 			}
 		}
 
+		internal virtual void HelperFrameTick ()
+		{
+			m_elapsedFrameCount++;
+			if (Tick != null) {
+				Tick (ElapsedFrameCount);
+			}
+		}
+
+		internal virtual void HelperLateFrameTick ()
+		{
+			if (LateTick != null) {
+				LateTick (ElapsedFrameCount);
+			}
+		}
+
 		protected virtual void OnHelperTick ()
 		{
 			HelperTick ();

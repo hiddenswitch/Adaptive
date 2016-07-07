@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using NUnit.Framework;
 using HiddenSwitch.Multiplayer;
 using System;
+using System.Linq;
 
 namespace HiddenSwitch.Multiplayer.Tests
 {
@@ -13,19 +14,25 @@ namespace HiddenSwitch.Multiplayer.Tests
 
 		public bool Logging { get; set; }
 
+		public int ExecutionOrder;
+
 		public static void ElapseTimers (long ticks)
 		{
 			for (var i = 0L; i < ticks; i += (long)(10e10 / 60.0)) {
-				foreach (var clock in m_timers) {
+				foreach (var clockRef in m_timers.OrderBy(t => ((TestClock)(t.Target)).ExecutionOrder)) {
+					var clock = (TestClock)clockRef.Target;
+					if (clock.FramesPerSecond != 60) {
+						throw new InvalidOperationException ("Test clock only works with 60 fps clocks");
+					}
 					if (clock.Logging) {
 						System.Console.WriteLine ("Timer {0} ticked", clock.Name);
 					}
-					clock.Timer.ElapseTicks ((long)(10e10 / 60.0) + 1L);
+					clock.Timer.ElapseTicks ((long)(10e10 / 60.0));
 				}
 			}
 		}
 
-		protected static HashSet<TestClock> m_timers = new HashSet<TestClock> ();
+		protected static HashSet<WeakReference> m_timers = new HashSet<WeakReference> ();
 		public DeterministicTimer Timer;
 		protected bool m_running;
 
@@ -44,7 +51,7 @@ namespace HiddenSwitch.Multiplayer.Tests
 			StartFrame = startFrame;
 
 			Timer = new DeterministicTimer ();
-			m_timers.Add (this);
+			m_timers.Add (new WeakReference (this));
 			if (autostart) {
 				Running = true;
 			}
@@ -78,6 +85,11 @@ namespace HiddenSwitch.Multiplayer.Tests
 		void OnSystemTimerElapsed (object sender, System.Timers.ElapsedEventArgs e)
 		{
 			OnHelperTick ();
+		}
+
+		public static void ClearOldTimers ()
+		{
+			m_timers.Clear ();
 		}
 	}
 

@@ -12,6 +12,8 @@ namespace HiddenSwitch.Multiplayer
 {
 	public class PlayoutDelayedClock : ManualClock
 	{
+		public string Name { get; set; }
+
 		public enum BufferState
 		{
 			Buffering,
@@ -77,7 +79,7 @@ namespace HiddenSwitch.Multiplayer
 		/// </summary>
 		protected Dictionary<FrameIndex, FrameReadyInfo> m_frameCommands = new Dictionary<FrameIndex, FrameReadyInfo> ();
 
-		protected int m_highestExecutableFrame = int.MinValue;
+		protected int m_highestExecutableFrame = -1;
 
 		/// <summary>
 		/// This is the highest index of a frame we can execute
@@ -110,9 +112,9 @@ namespace HiddenSwitch.Multiplayer
 
 			TimeClock = timeClock;
 			try {
-				m_highestExecutableFrame = checked(firstFrameIndex - 1 - playoutDelayFrameCount);
+				m_highestExecutableFrame = firstFrameIndex - 1;
 			} catch (System.OverflowException e) {
-				m_highestExecutableFrame = int.MinValue + playoutDelayFrameCount;
+				m_highestExecutableFrame = int.MinValue;
 			}
 		}
 
@@ -123,11 +125,35 @@ namespace HiddenSwitch.Multiplayer
 		/// TODO: Optimize for situations where you receive command lists for multiple frames.
 		/// </summary>
 		/// <param name="elapsedFrames">The number of frames that were elapsed</param>
-		public void IncrementReadyForFrame (FrameIndex frameIndex)
+		public void SetReadyForFrame (FrameIndex frameIndex, PeerId peerId, bool allPrior = false)
 		{
-//			Debug.Log (string.Format ("incrementing {0}", frameIndex));
+			// Don't do anything if the frame we're setting ready is less than or equal to our greatest
+			// executable frame, since clearly that prior frame was already ready
+			if (frameIndex <= m_highestExecutableFrame) {
+				return;
+			}
+
+			// First, if we have to deal with all prior frames, recursively deal with them with allPrior set
+			// to false
+			if (allPrior) {
+				// Find the earliest such frame, and start setting ready from there
+				var priorFrameIndex = frameIndex;
+				while (m_frameCommands.ContainsKey (priorFrameIndex - 1)
+					// Only bother setting prior frames ready if they're greater than what
+					// we believe is our highest executable frame
+				       && ((priorFrameIndex - 1) > m_highestExecutableFrame)) {
+					priorFrameIndex--;
+					// We're not going to call set ready for frame backwards because
+					// that would violate the way the invariants later in this function work
+				}
+				// Set ready for frame forward to keep working the invariants later in this function
+				// We don't call SetReadyForFrame on the requested frame index, we allow it to keep executing in this function.
+				for (var i = priorFrameIndex; i < frameIndex; i++) {
+					SetReadyForFrame (frameIndex: i, peerId: peerId, allPrior: false);
+				}
+			}
+
 			// TODO: Analyze the rate that we receive ready frames. Then, adjust the simulation rate appropriately.
-//			var frameIndex = elapsedFrames - 1;
 			// Is this the first time we're seeing this frame?
 			if (!m_frameCommands.ContainsKey (frameIndex)) {
 				m_frameCommands [frameIndex] = new FrameReadyInfo ();
@@ -156,7 +182,7 @@ namespace HiddenSwitch.Multiplayer
 			}
 
 			// Increment the number of peers ready
-			frameInfo.PeersReady++;
+			frameInfo.SetPeerReady (peerId);
 
 			// If this frame is now ready, and all my prior frames are ready, I can definitely execute this frame
 			if (frameInfo.PeersReady >= PeerCount
@@ -225,7 +251,18 @@ namespace HiddenSwitch.Multiplayer
 
 		public sealed class FrameReadyInfo
 		{
-			public byte PeersReady;
+			public int PeersReady { 
+				get {
+					return m_peersReady.Count;
+				} 
+			}
+
+			public void SetPeerReady (PeerId peerId)
+			{
+				m_peersReady [peerId] = true;
+			}
+
+			private Dictionary<int, bool> m_peersReady = new Dictionary<int, bool> (2);
 			public bool AllPriorFramesReady;
 		}
 	}

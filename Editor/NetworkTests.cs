@@ -34,8 +34,8 @@ namespace HiddenSwitch.Multiplayer.Tests
 			var network2 = new HiddenSwitch.Multiplayer.Network<GameState, GameInput> (clock: clock, transport: transport2, startState: new GameState () { count = 52 });
 
 			network1.AddPeer ("2", 4);
-			network1.QueueInput (new GameInput () { direction = Vector3.up });
-			network2.QueueInput (new GameInput () { direction = Vector3.back });
+			network1.QueueInput (new GameInput () { direction = Vector3.up }, frameIndex: 0);
+			network2.QueueInput (new GameInput () { direction = Vector3.back }, frameIndex: 0);
 			clock.Step ();
 			var input1to2 = network2.GetSimulationFrame (0).Inputs [network1.MyPeerId] as GameInput;
 			Assert.IsNotNull (input1to2);

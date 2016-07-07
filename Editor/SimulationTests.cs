@@ -62,7 +62,6 @@ namespace HiddenSwitch.Multiplayer.Tests
 				comparisonState.location += direction;
 				input = new GameInput () { direction = direction };
 				simulation.SetOrExtendFrame (i, new SimulationFrame () {
-					FrameIndex = simulation.ElapsedFrameCount,
 					Inputs = new Dictionary<int, Input> () {
 						{ 1, input }
 					}

@@ -15,7 +15,6 @@ namespace HiddenSwitch.Multiplayer
 	/// </summary>
 	public class UnacknowledgedData
 	{
-		public int frameIndex;
 		public Input input;
 		public IList<CommandWithArguments> queuedCommands;
 	}
